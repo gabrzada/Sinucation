@@ -1,0 +1,62 @@
+using UnityEngine;
+
+namespace FriendSlop.Presentation
+{
+    public sealed partial class AvatarVisual
+    {
+        MeshFilter _bridgeForearmFilter;
+        Mesh _bridgeForearmOriginal, _bridgeForearmSkin;
+        Vector3[] _bridgeForearmRest, _bridgeForearmRestNormals, _bridgeForearmDeformed, _bridgeForearmNormals;
+
+        void UpdateBridgeForearm(bool active)
+        {
+            if(_bridgeForearmFilter==null && active)
+            {
+                var forearm=_elbowL.Find("Forearm");
+                if(forearm==null) return;
+                _bridgeForearmFilter=forearm.GetComponent<MeshFilter>();
+                if(_bridgeForearmFilter==null || _bridgeForearmFilter.sharedMesh==null) return;
+                _bridgeForearmOriginal=_bridgeForearmFilter.sharedMesh;
+                _bridgeForearmSkin=Instantiate(_bridgeForearmOriginal);
+                _bridgeForearmSkin.name="BridgeForearmSkin";_bridgeForearmSkin.MarkDynamic();
+                _bridgeForearmRest=_bridgeForearmOriginal.vertices;_bridgeForearmRestNormals=_bridgeForearmOriginal.normals;
+                _bridgeForearmDeformed=new Vector3[_bridgeForearmRest.Length];_bridgeForearmNormals=new Vector3[_bridgeForearmRest.Length];
+            }
+            if(_bridgeForearmFilter==null) return;
+            _bridgeForearmFilter.sharedMesh=active ? _bridgeForearmSkin : _bridgeForearmOriginal;
+            if(!active) return;
+            var meshTransform=_bridgeForearmFilter.transform;
+            var p0=_elbowL.TransformPoint(new Vector3(0,-.04f*QALimbScale,0));
+            var p3=_handL.position;float span=Vector3.Distance(p0,p3);
+            var p1=p0-_elbowL.up*span*.4f;var p2=p3+_handL.up*span*.4f;
+            var normalToWorld=meshTransform.localToWorldMatrix.inverse.transpose;
+            var normalToLocal=meshTransform.localToWorldMatrix.transpose;
+            for(int i=0;i<_bridgeForearmRest.Length;i++)
+            {
+                var rest=_bridgeForearmRest[i];
+                if(rest.y>=-.04f) {_bridgeForearmDeformed[i]=rest;_bridgeForearmNormals[i]=_bridgeForearmRestNormals[i];continue;}
+                float distance=(-rest.y-.04f)*QALimbScale;float t=Mathf.Clamp01(distance/(.12f*QALimbScale)),u=1-t;
+                var center=u*u*u*p0+3*u*u*t*p1+3*u*t*t*p2+t*t*t*p3;
+                var tangent=(3*u*u*(p1-p0)+6*u*t*(p2-p1)+3*t*t*(p3-p2)).normalized;
+                var seed=Quaternion.Slerp(_elbowL.rotation,_handL.rotation,Mathf.SmoothStep(0,1,t));
+                var right=Vector3.ProjectOnPlane(seed*Vector3.right,tangent).normalized;
+                if(right.sqrMagnitude<.01f)right=Vector3.ProjectOnPlane(_elbowL.forward,tangent).normalized;
+                var forward=Vector3.Cross(tangent,right).normalized;
+                center+=tangent*Mathf.Max(0,distance-.12f*QALimbScale);
+                var world=center+right*rest.x+forward*rest.z;
+                _bridgeForearmDeformed[i]=meshTransform.InverseTransformPoint(world);
+                var normal=_bridgeForearmRestNormals[i];
+                _bridgeForearmNormals[i]=normalToLocal.MultiplyVector(right*normal.x-tangent*normal.y+forward*normal.z).normalized;
+            }
+            _bridgeForearmSkin.vertices=_bridgeForearmDeformed;_bridgeForearmSkin.normals=_bridgeForearmNormals;
+            _bridgeForearmSkin.RecalculateBounds();
+        }
+
+        void ReleaseBridgeForearm()
+        {
+            if(_bridgeForearmFilter!=null && _bridgeForearmOriginal!=null) _bridgeForearmFilter.sharedMesh=_bridgeForearmOriginal;
+            Release(_bridgeForearmSkin);_bridgeForearmSkin=null;_bridgeForearmFilter=null;_bridgeForearmOriginal=null;
+            _bridgeForearmRest=null;_bridgeForearmRestNormals=null;_bridgeForearmDeformed=null;_bridgeForearmNormals=null;
+        }
+    }
+}

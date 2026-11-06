@@ -1,0 +1,79 @@
+{
+  "rig": {
+    "hips": 0.56,
+    "spine_up": 0.04,
+    "neck_up": 0.44,
+    "head_up": 0.02,
+    "shoulder": [
+      0.19,
+      0.37
+    ],
+    "upper_arm": 0.18,
+    "forearm": 0.17,
+    "pivot_x": 0.085,
+    "pivot_drop": 0.05,
+    "thigh": 0.21,
+    "shin": 0.195,
+    "ankle_ground": 0.105
+  },
+  "triangles": {
+    "Torso": 10296,
+    "Pelvis": 396,
+    "Neck": 1880,
+    "Thigh": 952,
+    "Shin": 2200,
+    "Boot": 3840,
+    "UpperArm": 2812,
+    "Forearm": 1460,
+    "GloveR_Open": 4272,
+    "GloveL_Open": 4272,
+    "GloveR_Fist": 4436,
+    "GloveL_Fist": 4436,
+    "GloveL_Bridge": 4440,
+    "Cap": 5920
+  },
+  "fist_channel_clearance_m": 0.00147,
+  "fist_channel_wrap": 0.792,
+  "bridge_clearance_m_by_tilt_before_groove": {
+    "-6.0": 0.00061,
+    "-3.0": 0.00148,
+    "0.0": 0.00175,
+    "3.0": 0.00202,
+    "6.0": 0.00209,
+    "9.0": 0.00161,
+    "12.0": 0.00092
+  },
+  "bridge_clearance_m_by_tilt": {
+    "-6.0": 0.00118,
+    "-3.0": 0.00148,
+    "0.0": 0.00175,
+    "3.0": 0.00202,
+    "6.0": 0.00196,
+    "9.0": 0.0015,
+    "12.0": 0.00118
+  },
+  "unity": {
+    "fist_channel": [
+      -0.00708,
+      -0.10148,
+      0.0
+    ],
+    "bridge_hand_rotation_xyzw": [
+      -0.459665,
+      0.776623,
+      -0.219413,
+      0.370707
+    ],
+    "bridge_wrist": [
+      -0.08024,
+      0.00472,
+      -0.10384
+    ],
+    "bridge_tips": [
+      -0.059,
+      -0.0531,
+      0.0531
+    ],
+    "bridge_height": 0.053099999999999994
+  }
+}

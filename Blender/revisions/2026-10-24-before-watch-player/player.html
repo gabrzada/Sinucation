@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Caçapa Russa · YouTube</title>
+<style>html,body{margin:0;background:#101923;color:#fff;font:14px sans-serif;width:100%;height:100%;overflow:hidden}
+#player{width:100%;height:100%;min-width:200px;min-height:200px}#probe{position:absolute;left:0;top:0;width:200px;height:200px;opacity:0.01;z-index:-1;pointer-events:none}
+#player{position:relative;z-index:1}</style></head>
+<body><div id="player"></div><div id="probe"></div><script>
+// Player oficial do YouTube (IFrame API). O jogo só manda comandos (vídeo, posição, pausa, volume); nada é descarregado.
+// "probe" é um segundo player escondido que nunca toca: só serve para listar os vídeos de uma playlist.
+let player, probe, current = '', ready = false, probeReady = false, suspended = false, lastSeek = 0, blocked = false, job = null, reported = '';
+function post(o) { const m = JSON.stringify(o); if (window.Unity) Unity.call(m); else if (window.chrome && chrome.webview) chrome.webview.postMessage(m); }
+function send(type, code) { post({ type, video: current, code: code || 0 }); }
+function meta() {
+  if (!ready || !current || reported === current) return;
+  const d = player.getDuration ? player.getDuration() : 0;
+  if (!(d > 0)) return;
+  const v = player.getVideoData ? player.getVideoData() : {};
+  reported = current;
+  post({ type: 'meta', video: current, duration: d, title: v.title || '', author: v.author || '' });
+}
+function finishJob(ids, code) {
+  if (!job) return;
+  const j = job; job = null;
+  post({ type: 'expanded', list: j.list, ids: (ids || []).slice(0, j.max), code: code || 0 });
+}
+function onYouTubeIframeAPIReady() {
+  player = new YT.Player('player', { width: '100%', height: '100%',
+    playerVars: { playsinline: 1, controls: 1, rel: 0, origin: location.origin },
+    events: {
+      onReady: () => { ready = true; send('ready'); },
+      onStateChange: e => { if (e.data === 0) send('ended'); if (e.data === 1) { blocked = false; meta(); } },
+      onError: e => send('error', e.data),
+      onAutoplayBlocked: () => { blocked = true; send('blocked'); }
+    } });
+  probe = new YT.Player('probe', { width: 200, height: 200, playerVars: { origin: location.origin },
+    events: {
+      onReady: () => { probeReady = true; send('probeReady'); },
+      onError: e => { if (job) job.error = e.data; }
+    } });
+}
+// Lista os vídeos de uma playlist sem chave da API: carrega-a sem som no player escondido e lê getPlaylist().
+// Primeiro só "cue"; se a lista não aparecer em 3 s, carrega mesmo (mudo) e pára logo a seguir.
+window.fsExpand = (list, max) => {
+  if (!probeReady) { post({ type: 'expanded', list, ids: [], code: -1 }); return; }
+  job = { list, max, started: performance.now(), loaded: false };
+  probe.mute();
+  probe.cuePlaylist({ listType: 'playlist', list, index: 0 });
+  const poll = () => {
+    if (!job || job.list !== list) return;
+    const ids = (probe.getPlaylist && probe.getPlaylist()) || [];
+    const valid = ids.filter(id => /^[A-Za-z0-9_-]{11}$/.test(id));
+    const waited = performance.now() - job.started;
+    if (valid.length > 0) { probe.stopVideo(); finishJob(valid); return; }
+    if (job.error || waited > 10000) { probe.stopVideo(); finishJob([], job.error || -2); return; }
+    if (!job.loaded && waited > 3000) { job.loaded = true; probe.loadPlaylist({ listType: 'playlist', list, index: 0 }); }
+    setTimeout(poll, 400);
+  };
+  setTimeout(poll, 600);
+};
+window.fsPause = () => { if (ready) { player.pauseVideo(); suspended = true; } };
+window.fsUnblock = () => {
+  // Acção explícita do jogador (tecla J / botão): volta a pedir a reprodução. Se o som continuar recusado,
+  // arranca sem som (sempre permitido) e o volume volta no próximo fsSync.
+  blocked = false;
+  if (!ready) return;
+  try { player.playVideo(); } catch (e) { }
+  setTimeout(() => { if (player.getPlayerState() !== 1) { player.mute(); player.playVideo(); } }, 400);
+};
+window.fsSync = s => {
+  if (!ready) return;
+  player.setVolume(s.volume);
+  if (s.volume <= 0) player.mute(); else if (player.isMuted()) player.unMute();
+  const state = player.getPlayerState();
+  const duration = player.getDuration ? player.getDuration() : 0;
+  // Já acabou aqui e o anfitrião ainda não passou à seguinte: fica parado (sem recomeçar do início).
+  const finishedHere = current === s.video && state === 0 && (duration <= 0 || s.position > duration - 3);
+  if (current !== s.video) {
+    current = s.video; blocked = false; reported = '';
+    player.loadVideoById({ videoId: current, startSeconds: s.position });
+    lastSeek = performance.now();
+  } else if (!blocked && !finishedHere && (suspended || (performance.now() - lastSeek > 5000 && Math.abs(player.getCurrentTime() - s.position) > 2))) {
+    // Correcção de desvio: só quando passa de 2 s, no máximo a cada 5 s (sem saltos constantes nem "reinícios").
+    if (!(duration > 0 && s.position >= duration - 1)) player.seekTo(s.position, true);
+    lastSeek = performance.now();
+  }
+  suspended = false;
+  // Diagnóstico (a cada 3 s): estado real do player, tempo, volume e mute — para o jogo mostrar/registar.
+  if (!window.__lastState || performance.now() - window.__lastState > 3000) {
+    window.__lastState = performance.now();
+    post({ type: 'state', video: current, code: player.getPlayerState(), duration: player.getCurrentTime(), title: String(player.getVolume()), author: String(player.isMuted()) });
+  }
+  if (s.paused) { if (state === 1 || state === 3) player.pauseVideo(); }
+  else if (!blocked && !finishedHere && state !== 1 && state !== 3) player.playVideo();
+  meta();
+};
+</script><script src="https://www.youtube.com/iframe_api"></script></body></html>

@@ -1,0 +1,113 @@
+# C/C++ source files
+!*.c
+!*.cc
+!*.cpp
+!*.cpp.template
+!*.h
+!*.h.template
+!*.hpp
+!*.inl
+!*.inc
+!*.m
+!*.mm
+!*.rc
+!*.rc2
+!*.def
+!*.exp
+!*.manifest
+
+# ISPC files
+!*.ispc
+!*.isph
+
+# Re-ignore vs host manifest
+*.vshost.exe.manifest
+
+# Java source files
+!*.java
+!*.java.template
+
+# C# source files
+!*.cs
+!*.cs.template
+!*.aspx
+!*.resx
+
+# Shader formats
+!*.usf
+!*.ush
+!*.hlsl
+!*.glsl
+
+# Text files
+!*.txt
+!*.md
+
+# Script files
+!*.bat
+!*.sh
+!*.pl
+!*.py
+!*.js
+!*.ts
+!*.command
+
+# Other configuration and markup files
+!*.ini
+!*.json
+!*.tps
+!*.xml
+!*.xaml
+!*.uproject
+!*.uplugin
+!*.html
+!*.html.template
+!*.css
+!*.udn
+!*.config
+!*.version
+!.git*
+!.editorconfig
+
+# Projects and makefiles
+!*.cmake
+!*.mk
+!*.dsp
+!*.dsw
+!*.csproj
+!*.vcproj
+!*.vcxproj
+!*.vcxproj.filters
+!*.sln
+!*.xcodeproj
+!*.xcconfig
+!*.vsprops
+!*.snippet
+!Makefile
+!Makefile.*
+!Settings.settings
+
+# Specific names
+!README
+!AUTHORS
+!LICENSE
+!FAQ
+!VERSION
+!ChangeLog
+
+# Ignore Unix backup files
+*~
+
+# Ignore
+Win32/
+x64/
+.vs/
+/build/*.*
+/*.exe
+/*.dll
+/*.ini
+/*.hlsl
+/*.txt
+/*.patch
+Source/Renderer/DirectXTex/Shaders/Compiled/
+*.vcxproj.user

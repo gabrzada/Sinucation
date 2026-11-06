@@ -1,0 +1,22 @@
+{
+  "ContainerA": {
+    "vertices": 5072,
+    "triangles": 9800
+  },
+  "ContainerC": {
+    "vertices": 5072,
+    "triangles": 9800
+  },
+  "Chest": {
+    "vertices": 928,
+    "triangles": 1788
+  },
+  "Cone": {
+    "vertices": 480,
+    "triangles": 944
+  },
+  "Warning": {
+    "vertices": 600,
+    "triangles": 1156
+  }
+}

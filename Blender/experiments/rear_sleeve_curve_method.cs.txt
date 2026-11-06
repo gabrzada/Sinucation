@@ -1,0 +1,50 @@
+        Mesh _qaSleeveMesh;
+        GameObject _qaSleeveObject;
+        readonly Vector3[] _qaSleeveVertices = new Vector3[7 * 16];
+        void UpdateCueSleeve(bool active)
+        {
+            if (_qaSleeveObject == null && active)
+            {
+                _qaSleeveObject = new GameObject("CueSleeveCurve");
+                _qaSleeveObject.transform.SetParent(transform, false);
+                _qaSleeveMesh = new Mesh { name = "CueSleeveCurve" };
+                _qaSleeveMesh.MarkDynamic();
+                _qaSleeveObject.AddComponent<MeshFilter>().sharedMesh = _qaSleeveMesh;
+                _qaSleeveObject.AddComponent<MeshRenderer>().sharedMaterial = _cueWristJoint.GetComponent<Renderer>().sharedMaterial;
+                var indices = new int[6 * 16 * 6]; int n = 0;
+                for (int ring = 0; ring < 6; ring++) for (int side = 0; side < 16; side++)
+                {
+                    int a = ring * 16 + side, b = ring * 16 + (side + 1) % 16;
+                    indices[n++] = a; indices[n++] = b; indices[n++] = a + 16;
+                    indices[n++] = b; indices[n++] = b + 16; indices[n++] = a + 16;
+                }
+                _qaSleeveMesh.vertices = _qaSleeveVertices;
+                _qaSleeveMesh.triangles = indices;
+            }
+            if (_qaSleeveObject == null) return;
+            _qaSleeveObject.SetActive(active);
+            if (!active) return;
+            Vector3 p0 = _elbowR.TransformPoint(new Vector3(0, -.115f, 0));
+            Vector3 p3 = _handR.TransformPoint(Vector3.up * .024f);
+            float span = Vector3.Distance(p0, p3);
+            Vector3 p1 = p0 - _elbowR.up * span * .4f;
+            Vector3 p2 = p3 + _handR.up * span * .4f;
+            for (int ring = 0; ring <= 6; ring++)
+            {
+                float t = ring / 6f, u = 1 - t;
+                Vector3 center = u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3;
+                Vector3 tangent = (3*u*u*(p1-p0) + 6*u*t*(p2-p1) + 3*t*t*(p3-p2)).normalized;
+                Vector3 axis = Vector3.ProjectOnPlane(_handR.right, tangent).normalized;
+                if (axis.sqrMagnitude < .01f) axis = Vector3.Cross(tangent, Vector3.forward).normalized;
+                Vector3 other = Vector3.Cross(tangent, axis);
+                float radius = Mathf.Lerp(.042f, .037f, t);
+                for (int side = 0; side < 16; side++)
+                {
+                    float angle = side * Mathf.PI * 2 / 16;
+                    _qaSleeveVertices[ring*16+side] = transform.InverseTransformPoint(center + radius * (axis*Mathf.Cos(angle) + other*Mathf.Sin(angle)));
+                }
+            }
+            _qaSleeveMesh.vertices = _qaSleeveVertices;
+            _qaSleeveMesh.RecalculateNormals(); _qaSleeveMesh.RecalculateBounds();
+        }
+

@@ -1,0 +1,44 @@
+namespace FriendSlop.Net
+{
+    public sealed partial class NetGame
+    {
+        CueStrokePresentation _latestCueStroke;
+        FriendSlop.Match.MatchDirector _cueStrokeDirector;
+
+        void PublishAcceptedShot(FriendSlop.Match.MatchDirector director, FriendSlop.Match.ShotRequest shot)
+        {
+            if (!IsServer || !ReferenceEquals(director, _director) || NetworkManager == null || director.Sim.Cue == null) return;
+            var avatar = HasSnapshot ? FriendSlop.Presentation.AvatarLocator.Find(this, shot.PlayerId) : null;
+            UnityEngine.Vector3? shoulder = avatar != null ? avatar.RightShoulderPosition : (UnityEngine.Vector3?)null;
+            var stroke = FriendSlop.Presentation.CueStrokeFallback.Create(shot, director.Sim.Cue.Position,
+                director.Sim.Table, director.Sim.Settings.BallRadius, NetworkManager.ServerTime.Time, shoulder);
+            PublishCueStroke(stroke);
+        }
+
+        public bool TryGetCueStroke(int sequence, int shooter, out CueStrokePresentation stroke)
+        {
+            stroke = _latestCueStroke;
+            return stroke.Valid && stroke.Sequence == sequence && stroke.Shooter == shooter && NetworkManager != null && stroke.ActiveAt(NetworkManager.ServerTime.Time);
+        }
+
+        public bool PublishCueStroke(CueStrokePresentation stroke)
+        {
+            if (!ReferenceEquals(_cueStrokeDirector, _director)) { _latestCueStroke = default; _cueStrokeDirector = _director; }
+            if (!IsServer || _director == null || !stroke.IsValid ||
+                stroke.Sequence != _director.ShotSequence || stroke.Shooter != _director.CurrentPlayerId ||
+                (_latestCueStroke.Valid && stroke.Sequence <= _latestCueStroke.Sequence)) return false;
+            stroke.Valid = true;
+            _latestCueStroke = stroke;
+            EmitEvent(NetEventType.CueStroke, stroke.Write);
+            return true;
+        }
+
+        void ReceiveCueStroke(System.IO.BinaryReader reader)
+        {
+            if (CueStrokePresentation.TryRead(reader, out var stroke) &&
+                (!_latestCueStroke.Valid || (stroke.HasStartTime ? stroke.StartedAt > _latestCueStroke.StartedAt : stroke.Sequence > _latestCueStroke.Sequence)))
+                _latestCueStroke = stroke;
+        }
+    }
+}
+

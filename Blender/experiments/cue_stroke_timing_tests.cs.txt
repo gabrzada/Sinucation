@@ -1,0 +1,44 @@
+using System;
+using System.IO;
+using FriendSlop.Net;
+using NUnit.Framework;
+using UnityEngine;
+namespace FriendSlop.Tests
+{
+    public class CueStrokeTimingTests
+    {
+        static CueStrokePresentation Sample() => new CueStrokePresentation {
+            Sequence = 1, Shooter = 0, Direction = Vector3.forward,
+            Length = 1.2f, ContactTravel = .2f, ExtraTravel = .1f,
+            HasStartTime = true, StartedAt = 20
+        };
+        [Test]
+        public void DelayedArrivalUsesSharedClockAndExpires()
+        {
+            var stroke = Sample();
+            Assert.That(stroke.Elapsed(20.22), Is.EqualTo(.22f).Within(.00001f));
+            Assert.That(stroke.ActiveAt(20.22), Is.True);
+            Assert.That(stroke.ActiveAt(20.56), Is.False, "late packet must not replay an expired stroke");
+            Assert.That(stroke.Elapsed(19.99), Is.Zero, "small clock lead must not rewind before stroke start");
+        }
+        [Test]
+        public void ReadsPreviousPacketVersionWithoutInventingStartTime()
+        {
+            byte[] bytes;
+            using(var ms = new MemoryStream()) using(var w = new BinaryWriter(ms)) { Sample().Write(w); bytes = ms.ToArray(); }
+            Array.Resize(ref bytes, 57); bytes[0] = 1;
+            using(var ms = new MemoryStream(bytes)) using(var r = new BinaryReader(ms))
+            {
+                Assert.That(CueStrokePresentation.TryRead(r, out var stroke), Is.True);
+                Assert.That(stroke.HasStartTime, Is.False);
+                Assert.That(stroke.Sequence, Is.EqualTo(1));
+            }
+        }
+        [Test]
+        public void RejectsNonfiniteTimestamp()
+        {
+            var stroke = Sample(); stroke.StartedAt = double.NaN;
+            Assert.That(stroke.IsValid, Is.False);
+        }
+    }
+}

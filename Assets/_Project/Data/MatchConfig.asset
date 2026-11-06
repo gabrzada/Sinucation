@@ -1,0 +1,87 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: df5be3ea25759384f88755089d7d97cd, type: 3}
+  m_Name: MatchConfig
+  m_EditorClassIdentifier: FriendSlop::FriendSlop.Core.MatchConfig
+  PlayerMin: 2
+  PlayerMax: 6
+  RoundLimit: 6
+  RackMode: 0
+  FixedBallCount: 0
+  AdaptiveBallsByActivePlayers: 09000000090000000900000009000000060000000400000004000000i
+  SuddenDeathBalls: 4
+  MaxShotsPerRack: 45
+  TurnTimeLimit: 20
+  StartingLives: 2
+  RiskDangerTokens: 1
+  RiskTotalTokens: 6
+  PunishmentPresentationSeconds: 3.6
+  TriggerTimeout: 12
+  ImmunityProtectsFromPunishment: 0
+  CurrencyName: Dinheiros
+  WinnerReward: 100
+  ParticipationReward: 50
+  PocketReward: 10
+  CoinCap: 300
+  EnableSabotage: 1
+  SabotageAnytime: 1
+  SabotageCooldownSeconds: 20
+  SabotageImmunitySeconds: 15
+  SabotageCost: 60
+  ChaosCostMultiplier: 2
+  MaxPurchasesPerWindow: 1
+  ImmunityWindowsAfterSabotage: 0
+  RepeatTargetCostMultiplier: 1.25
+  UnderdogDiscount: 0.25
+  UnderdogGap: 2
+  ShopWindowSeconds: 22
+  EnableDebuffs: 1
+  MaxGameplayModifiersPerPlayer: 4
+  AntiRepeatWeightMultiplier: 0.5
+  RoundIntroSeconds: 2
+  ShotResultSeconds: 1.1
+  RoundWonSeconds: 3
+  RiskRevealSeconds: 3.2
+  ShopRevealSeconds: 2.2
+  Physics:
+    TableLength: 2.24
+    TableWidth: 1.12
+    BallRadius: 0.028575
+    CornerGap: 0.075
+    SideGap: 0.062
+    CornerPocketRadius: 0.056
+    CornerPocketOffset: 0.016
+    SidePocketRadius: 0.05
+    SidePocketOffset: 0.034
+    CornerJawAngle: 34
+    CornerJawDepth: 0.05
+    SideJawAngle: 43
+    SideJawDepth: 0.045
+    JawRestitution: 0.55
+    ShelfAcceleration: 1.2
+    FixedStep: 0.0020833334
+    MaxStepsPerFrame: 80
+    MaxSimulationSeconds: 25
+    MaxBallSpeed: 7
+    RollingDeceleration: 0.32
+    LinearDrag: 0.12
+    StopSpeed: 0.012
+    BallRestitution: 0.94
+    CushionRestitution: 0.76
+    CushionFriction: 0.08
+    MinCueSpeed: 0.25
+    MaxCueSpeed: 5.2
+    PowerCurveExponent: 1.35
+    FollowFactor: 0.55
+    EnglishFactor: 0.3
+    EnglishCushionTransfer: 0.6
+    SpinDecayPerSecond: 0.9

@@ -1,0 +1,365 @@
+using FriendSlop.Match;
+using FriendSlop.Net;
+using UnityEngine;
+
+namespace FriendSlop.Presentation
+{
+    /// <summary>
+    /// Taco e assistência de mira. O atirador local vê a mira da branca à 8 Ball Pool (linha, bola fantasma e para
+    /// onde a branca segue), sem a saída da bola tocada nem ressaltos; os outros vêem só o taco do atirador.
+    /// </summary>
+    public sealed class CueView : MonoBehaviour
+    {
+        GameBootstrap _game;
+        Transform _cue;
+        LineRenderer _aimLine;
+        LineRenderer _ghostRing;
+        LineRenderer _cueAfterLine;
+        const int GhostRingSegments = 40;
+        const float CueAfterLength = 0.2f;
+        Transform _placementGhost;
+        Material _placementMaterial;
+        float _remotePull;
+        // Follow-through: depois da tacada o taco avança através da branca e só depois desaparece.
+        float _follow = -1f;
+        Vector3 _followPos, _followDir;
+        int _followShooter = -1;
+        int _lastShotSeq = -1;
+        bool _cueShownLastFrame;
+        Vector3 _lastCuePos, _lastCueDir;
+        int _lastCueShooter = -1;
+        float _lastCueLength = BaseLength;
+        Vector3 _lastBridge;
+        Transform _shaft, _butt, _extensionRing;
+        const float BaseLength = 1.1f;
+        NetGame _observedNet;
+        float _lastPull, _followDistance, _followExtra, _lastFollowExtra;
+        int _lastAppliedStroke = -1;
+        bool _followTimed;
+        double _followStartedAt, _lastAppliedStartedAt = -1;
+
+        public void Initialize(GameBootstrap game)
+        {
+            _game = game;
+            _aimLine = CreateLine("AimLine", 0.005f);
+            _ghostRing = CreateLine("GhostRing", 0.0045f);
+            _ghostRing.loop = true;
+            _ghostRing.numCapVertices = 0;
+            _ghostRing.positionCount = GhostRingSegments;
+            _cueAfterLine = CreateLine("CueAfterLine", 0.004f);
+
+            var shaftMat = VisualFactory.Lit(new Color(0.86f, 0.72f, 0.48f), 0.6f);
+            var buttMat = VisualFactory.Lit(new Color(0.15f, 0.08f, 0.05f), 0.7f);
+            var tipMat = VisualFactory.Lit(new Color(0.2f, 0.45f, 0.85f), 0.2f);
+            _cue = new GameObject("Cue").transform;
+            _cue.SetParent(transform, false);
+            _shaft = Rod(_cue, "Shaft", -0.4f, 0.4f, 0.012f, shaftMat);
+            _butt = Rod(_cue, "Butt", -0.95f, 0.15f, 0.022f, buttMat);
+            var brass = VisualFactory.Lit(ArtPalette.Mustard, 0.8f, 0.7f);
+            var ivory = VisualFactory.Lit(ArtPalette.Ivory, 0.35f);
+            var grip = VisualFactory.Lit(new Color(0.07f, 0.04f, 0.03f), 0.3f);
+            Material ResolveCueMaterial(string name)
+            {
+                switch (name)
+                {
+                    case "shaft": return shaftMat;
+                    case "butt": return buttMat;
+                    case "brass": return brass;
+                    case "ivory": return ivory;
+                    case "grip": return grip;
+                    default: return shaftMat;
+                }
+            }
+            var shaftModel = FsModels.Get("cue", "Shaft");
+            var buttModel = FsModels.Get("cue", "Butt");
+            if (shaftModel != null)
+            {
+                _shaft.GetComponent<Renderer>().enabled = false;
+                FsModels.Spawn(shaftModel, _shaft, Vector3.zero, Quaternion.identity, Vector3.one, ResolveCueMaterial);
+            }
+            if (buttModel != null)
+            {
+                _butt.GetComponent<Renderer>().enabled = false;
+                FsModels.Spawn(buttModel, _butt, Vector3.zero, Quaternion.identity, Vector3.one, ResolveCueMaterial);
+            }
+            // The tapered shaft is narrower at the tip; the contact pivot itself stays at z=0.
+            Rod(_cue, "Tip", -0.004f, 0.004f, shaftModel != null ? 0.00744f : 0.011f, tipMat);
+            _extensionRing = Rod(_cue, "Ring", -0.8f, 0.008f, 0.024f, brass);
+            SetCueLength(BaseLength);
+
+            _placementMaterial = VisualFactory.Lit(new Color(0.95f, 0.95f, 0.9f), 0.8f);
+            _placementGhost = VisualFactory.Primitive(PrimitiveType.Sphere, "PlacementGhost", transform, Vector3.zero, Vector3.one * 0.057f, _placementMaterial).transform;
+            HideAll();
+        }
+
+        static Transform Rod(Transform parent, string name, float z, float halfLength, float diameter, Material mat)
+        {
+            var t = VisualFactory.Primitive(PrimitiveType.Cylinder, name, parent, new Vector3(0, 0, z), new Vector3(diameter, halfLength, diameter), mat).transform;
+            t.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            return t;
+        }
+
+        /// <summary>Haste clara da ponta até 30 cm do fim, anel de latão e punho escuro nos últimos 30 cm.</summary>
+        void SetCueLength(float length)
+        {
+            float shaftLen = Mathf.Max(0.2f, length - 0.3f);
+            _shaft.localPosition = new Vector3(0f, 0f, -shaftLen * 0.5f);
+            var s = _shaft.localScale;
+            _shaft.localScale = new Vector3(s.x, shaftLen * 0.5f, s.z);
+            _butt.localPosition = new Vector3(0f, 0f, -shaftLen - 0.15f);
+            _extensionRing.localPosition = new Vector3(0f, 0f, -shaftLen);
+        }
+
+        LineRenderer CreateLine(string lineName, float width)
+        {
+            var go = new GameObject(lineName);
+            go.transform.SetParent(transform, false);
+            var line = go.AddComponent<LineRenderer>();
+            line.useWorldSpace = true;
+            line.widthMultiplier = width;
+            line.material = VisualFactory.Unlit(Color.white);
+            line.numCapVertices = 2;
+            line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            line.receiveShadows = false;
+            return line;
+        }
+
+        void HideAll()
+        {
+            _aimLine.enabled = false;
+            _ghostRing.enabled = false;
+            _cueAfterLine.enabled = false;
+            _cue.gameObject.SetActive(false);
+            _placementGhost.gameObject.SetActive(false);
+        }
+
+        void LateUpdate()
+        {
+            HideAll();
+            var net = NetGame.Instance;
+            if (net != _observedNet)
+            {
+                _observedNet = net; _lastAppliedStroke = -1; _lastAppliedStartedAt = -1; _followTimed = false;
+                _lastShotSeq = -1;
+                _follow = -1f;
+                _cueShownLastFrame = false;
+            }
+            if (net == null || !net.HasSnapshot || !net.View.InMatch || net.Mirror.Cue == null) return;
+            var view = net.View;
+
+            // Nova tacada: se o taco estava visível no frame anterior, faz o movimento de acompanhamento.
+            if (view.ShotSequence != _lastShotSeq)
+            {
+                if (_lastShotSeq >= 0 && _cueShownLastFrame && (view.Phase == MatchPhase.ShotWindup || view.Phase == MatchPhase.Simulating))
+                {
+                    _follow = 0f; _followTimed = false;
+                    _followPos = _lastCuePos;
+                    _followDir = _lastCueDir;
+                    _followShooter = _lastCueShooter;
+                    _followDistance = _lastPull + 0.01f;
+                    var followAvatar = AvatarLocator.Find(net, _followShooter);
+                    _followExtra = _lastFollowExtra;
+                    if (net.IsServer) net.PublishCueStroke(new CueStrokePresentation {
+                        Sequence = view.ShotSequence, Shooter = _followShooter, Tip = _followPos,
+                        HasStartTime = true, StartedAt = net.NetworkManager.ServerTime.Time - (view.Phase == MatchPhase.ShotWindup ? Mathf.Clamp(MatchDirector.ShotContactSeconds - view.PhaseRemaining, 0f, MatchDirector.ShotContactSeconds) : MatchDirector.ShotContactSeconds),
+                        Direction = _followDir, Bridge = _lastBridge, Length = _lastCueLength,
+                        ContactTravel = _followDistance, ExtraTravel = _followExtra
+                    });
+                    Debug.Log("[CueFollow] shooter=" + _followShooter + " contact=" + _followDistance.ToString("F5") + " extra=" + _followExtra.ToString("F5")); followAvatar?.PlayStroke();
+                }
+                _lastShotSeq = view.ShotSequence;
+            }
+            if (view.ShotSequence < _lastAppliedStroke) _lastAppliedStroke = -1;
+            if ((view.Phase == MatchPhase.ShotWindup || view.Phase == MatchPhase.Simulating) &&
+                net.TryGetCueStroke(view.ShotSequence, view.CurrentPlayer, out var sharedStroke) &&
+                (_lastAppliedStroke != view.ShotSequence || (sharedStroke.HasStartTime && sharedStroke.StartedAt != _lastAppliedStartedAt)))
+            {
+                _lastAppliedStroke = sharedStroke.Sequence; _lastAppliedStartedAt = sharedStroke.StartedAt;
+                _followTimed = sharedStroke.HasStartTime; _followStartedAt = sharedStroke.StartedAt;
+                _followPos = sharedStroke.Tip; _followDir = sharedStroke.Direction;
+                _followShooter = sharedStroke.Shooter; _lastBridge = sharedStroke.Bridge;
+                _lastCueLength = sharedStroke.Length; _followDistance = sharedStroke.ContactTravel;
+                _followExtra = sharedStroke.ExtraTravel;
+                if (_follow < 0f) _follow = 0f;
+                SetCueLength(_lastCueLength);
+                AvatarLocator.Find(net, _followShooter)?.PlayStroke();
+                Debug.Log("[CueStrokeApplied] sequence=" + sharedStroke.Sequence + " shooter=" + _followShooter + " contact=" + _followDistance.ToString("F5") + " extra=" + _followExtra.ToString("F5") + " tip=" + _followPos.ToString("F5") + " length=" + _lastCueLength.ToString("F5"));
+            }
+            _cueShownLastFrame = false;
+            if (_follow >= 0f)
+            {
+                _follow += Time.deltaTime;
+                if (_followTimed) _follow = (float)System.Math.Max(0, net.NetworkManager.ServerTime.Time - _followStartedAt);
+                else if (view.Phase == MatchPhase.ShotWindup)
+                    _follow = Mathf.Clamp(MatchDirector.ShotContactSeconds - view.PhaseRemaining, 0f, MatchDirector.ShotContactSeconds);
+                else if (view.Phase == MatchPhase.Simulating)
+                    _follow = Mathf.Max(_follow, MatchDirector.ShotContactSeconds);
+                float k = Mathf.Clamp01(_follow / MatchDirector.ShotContactSeconds);
+                float push = k * k * _followDistance + Mathf.Clamp01((_follow - MatchDirector.ShotContactSeconds) / 0.12f) * _followExtra;
+                _cue.gameObject.SetActive(_follow < 0.55f);
+                _cue.position = _followPos + _followDir * push;
+                _cue.rotation = Quaternion.LookRotation(_followDir);
+                var shooterAvatar = AvatarLocator.Find(net, _followShooter);
+                if (shooterAvatar != null && _follow < 0.55f) shooterAvatar.SetCue(_cue.position, _followDir, _lastCueLength, _lastBridge);
+                if (_follow >= 0.55f) _follow = -1f;
+                if (view.Phase == MatchPhase.ShotWindup || view.Phase == MatchPhase.Simulating) return;
+            }
+
+            var shot = _game.Shot;
+            var sim = net.Mirror;
+            float r = sim.Settings.BallRadius;
+
+            if (shot.PlacementVisible)
+            {
+                _placementGhost.gameObject.SetActive(true);
+                float bob = shot.PlacementPending ? Mathf.Sin(Time.time * 12f) * 0.004f : 0f;
+                _placementGhost.position = TableView.ToWorld(shot.PlacementPoint, r + bob);
+                Color c = shot.PlacementPending ? new Color(1f, 0.92f, 0.55f) : shot.PlacementValid ? new Color(0.85f, 1f, 0.85f) : new Color(1f, 0.35f, 0.35f);
+                VisualFactory.SetColor(_placementMaterial, c);
+                return;
+            }
+
+            if (shot.State == ShotState.Aiming || (shot.State == ShotState.Watching && view.Phase == MatchPhase.AwaitShot))
+            {
+                DrawCue(shot.CuePosition(net), shot.AimDirection, shot.PullDistance, shot.Spin, r, view.CurrentPlayer, true);
+                if (shot.State == ShotState.Aiming) DrawAssist(net, shot, r);
+                return;
+            }
+
+            var aim = net.RemoteAim;
+            var me = net.LocalPlayer;
+            bool someoneElse = me == null || view.CurrentPlayer != me.Id;
+            if (view.Phase == MatchPhase.AwaitShot && someoneElse && aim.PlayerId == view.CurrentPlayer)
+            {
+                if (aim.Placing)
+                {
+                    _placementGhost.gameObject.SetActive(true);
+                    _placementGhost.position = TableView.ToWorld(aim.PlacePosition, r);
+                    VisualFactory.SetColor(_placementMaterial, new Color(0.8f, 0.8f, 0.8f));
+                    return;
+                }
+                _remotePull = Mathf.Lerp(_remotePull, aim.Pull * ShotController.MaxPull, Time.deltaTime * 12f);
+                DrawCue(sim.Cue.Position, aim.Direction, _remotePull, aim.Spin, r, aim.PlayerId, false);
+            }
+        }
+
+        void DrawCue(Vector2 cuePos, Vector2 direction, float pull, Vector2 spin, float r, int shooter, bool local)
+        {
+            var net = NetGame.Instance;
+            var avatar = AvatarLocator.Find(net, shooter);
+            // Os outros só vêem o taco quando quem joga já chegou ao sítio da tacada (não flutua enquanto caminha).
+            if (!local && avatar != null)
+            {
+                Vector2 stand = ShotMath.StandBehind(cuePos, direction, net.Mirror.Table);
+                Vector3 body = avatar.transform.position;
+                if (new Vector2(body.x - stand.x, body.z - stand.y).sqrMagnitude > 0.45f * 0.45f) return;
+            }
+
+            Vector3 cueWorld = TableView.ToWorld(cuePos, r);
+            var dir3 = new Vector3(direction.x, 0f, direction.y).normalized;
+            var right = Vector3.Cross(Vector3.up, dir3);
+            float tiltDeg = ShotMath.CueTilt(cuePos, direction, net.Mirror.Table, r);
+            Vector3 tilt = Quaternion.AngleAxis(tiltDeg, right) * dir3;
+            Vector3 tip0 = cueWorld - tilt * (r + 0.01f) + Vector3.up * (spin.y * r * 0.6f) + right * (spin.x * r * 0.6f);
+            // The bridge remains still while the cue slides through it. Compress only the visual
+            // backswing if the tip would otherwise retreat past the bridge hand.
+            float visualPull = avatar != null ? avatar.VisualCuePull(tip0, tilt, pull, Time.deltaTime) : pull;
+            Vector3 tip = tip0 - tilt * visualPull;
+
+            // Taco à medida do boneco: a mão direita agarra-o 20 cm atrás do ombro e sobra só a ponta do punho
+            // (antes tinha 1,36 m e ficava a sair pelas costas). O punho está preso ao taco: ao puxar, a mão vai
+            // com ele; a ponte fica pousada no pano, 18 cm atrás da branca.
+            float length = 1.1f;
+            Vector3 bridge = cueWorld - dir3 * 0.18f;
+            bridge.y = TableView.TopY + 0.035f;
+            if (avatar != null)
+            {
+                float shoulderT = Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt);
+                length = Mathf.Clamp(shoulderT + 0.04f + AvatarVisual.CueGripFromButt, 0.75f, 2.4f);
+                avatar.SetCue(tip, tilt, length, bridge);
+                // Keep updating the hand target while the pose settles; reveal the remote cue
+                // only after the gripping hand has reached it.
+                if (!local && !avatar.CueGripReady) return;
+            }
+            _cue.gameObject.SetActive(true);
+            _cue.position = tip;
+            _cue.rotation = Quaternion.LookRotation(tilt);
+            SetCueLength(length);
+            _lastBridge = bridge;
+
+            _cueShownLastFrame = true;
+            _lastCuePos = _cue.position;
+            _lastCueDir = tilt;
+            _lastCueShooter = shooter;
+            _lastCueLength = length;
+            _lastPull = visualPull;
+            _lastFollowExtra = avatar != null ? avatar.AvailableCueFollowThrough(visualPull + .01f, tilt) : .025f;
+        }
+
+        static void SetColor(LineRenderer line, Color start, Color end)
+        {
+            line.startColor = start;
+            line.endColor = end;
+        }
+
+        /// <summary>
+        /// Assistência de mira à 8 Ball Pool, só da branca: linha recta da branca até ao centro da bola fantasma
+        /// (onde ela vai estar no primeiro toque), o contorno dessa bola e, se tocar noutra bola, um traço curto para
+        /// onde a branca segue (regra dos 90°: maior nos cortes finos, nada numa bola cheia). Não mostra a saída da
+        /// bola tocada, ressaltos, força nem a curva dos debuffs.
+        /// </summary>
+        void DrawAssist(NetGame net, ShotController shot, float r)
+        {
+            var sim = net.Mirror;
+            var cue = sim.Cue;
+            Vector2 real = cue.Position;
+            cue.Position = shot.CuePosition(net);
+            sim.CastFromCue(shot.AimDirection, out Vector2 end, out int hitBall);
+            Vector2 from = cue.Position;
+            cue.Position = real;
+            if ((end - from).sqrMagnitude < 1e-6f) return;
+            var white = new Color(1f, 1f, 1f, 0.9f);
+
+            _aimLine.enabled = true;
+            _aimLine.positionCount = 2;
+            _aimLine.SetPosition(0, TableView.ToWorld(from, r));
+            _aimLine.SetPosition(1, TableView.ToWorld(end, r));
+            SetColor(_aimLine, white, white);
+
+            // Contorno da bola fantasma no plano da câmara: é a silhueta dela vista daqui, redonda de qualquer ângulo.
+            Vector3 center = TableView.ToWorld(end, r);
+            var cam = _game.Rig != null ? _game.Rig.Camera : null;
+            Vector3 ax = cam != null ? cam.transform.right : Vector3.right;
+            Vector3 ay = cam != null ? cam.transform.up : Vector3.forward;
+            for (int i = 0; i < GhostRingSegments; i++)
+            {
+                float a = i * Mathf.PI * 2f / GhostRingSegments;
+                _ghostRing.SetPosition(i, center + (ax * Mathf.Cos(a) + ay * Mathf.Sin(a)) * r);
+            }
+            _ghostRing.enabled = true;
+            SetColor(_ghostRing, white, white);
+
+            if (hitBall < 0) return;
+            var target = sim.GetBall(hitBall);
+            if (target == null) return;
+            Vector2 n = (target.Position - end).normalized;
+            Vector2 d = shot.AimDirection.normalized;
+            Vector2 tangent = d - n * Vector2.Dot(d, n);
+            float stub = CueAfterLength * tangent.magnitude;
+            if (stub < 0.01f) return;
+            _cueAfterLine.enabled = true;
+            _cueAfterLine.positionCount = 2;
+            _cueAfterLine.SetPosition(0, center);
+            _cueAfterLine.SetPosition(1, TableView.ToWorld(end + tangent.normalized * stub, r));
+            SetColor(_cueAfterLine, white, new Color(1f, 1f, 1f, 0.35f));
+        }
+    }
+}
+
+
+
+
+
+
+
+

@@ -1,0 +1,25 @@
+                        if(cueHits+gloveHits>hitsBefore)
+                        {
+                            affectedPoses++; bool solved=false;
+                            foreach(var change in offsets)
+                            {
+                                var desired=Quaternion.Euler(14f+change.x,yaw+change.y,change.z);
+                                bool clear=true;
+                                foreach(var sample in path)
+                                {
+                                    setLength.Invoke(cueView,new object[]{sample.Length}); cue.position=sample.CuePosition; cue.rotation=sample.CueRotation;
+                                    var delta=desired*Quaternion.Inverse(sample.PivotRotation);
+                                    var headPosition=sample.Pivot+delta*(sample.HeadPosition-sample.Pivot);
+                                    var headRotation=delta*sample.HeadRotation;
+                                    bool Hit(MeshCollider collider,Vector3 position,Quaternion rotation) => Physics.ComputePenetration(collider,position,rotation,head,headPosition,headRotation,out _,out _);
+                                    foreach(var c in cueColliders) if(Hit(c,c.transform.position,c.transform.rotation)) {clear=false;break;}
+                                    if(clear && sample.FistActive && (Hit(palm,sample.PalmPosition,sample.PalmRotation)||Hit(digits,sample.DigitPosition,sample.DigitRotation))) clear=false;
+                                    if(!clear) break;
+                                }
+                                if(!clear) continue;
+                                solved=true; solvedPoses++; maxRollUsed=Mathf.Max(maxRollUsed,Mathf.Abs(change.z));
+                                if(solvedPoses<=8) Debug.Log($"HEAD_POSE_FOUND shape={shape} ball={ball:F3} yaw={yaw} elevation={degrees:F3} pitchChange={change.x} yawChange={change.y} roll={change.z}");
+                                break;
+                            }
+                            if(!solved && affectedPoses-solvedPoses<=8) Debug.Log($"HEAD_POSE_UNSOLVED shape={shape} ball={ball:F3} yaw={yaw} elevation={degrees:F3}");
+                        }

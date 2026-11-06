@@ -1,0 +1,28 @@
+{
+  "animation_files": [
+    {
+      "file": "AvatarVisual.cs",
+      "unchanged": true
+    },
+    {
+      "file": "AvatarAnimation.cs",
+      "unchanged": true
+    },
+    {
+      "file": "AvatarLegs.cs",
+      "unchanged": true
+    },
+    {
+      "file": "ShotController.cs",
+      "unchanged": true
+    },
+    {
+      "file": "CueView.cs",
+      "unchanged": true
+    }
+  ],
+  "three_aim_poses_identical": true,
+  "installed_asset_matches": true,
+  "blend_reopened": true,
+  "unity_capture_completed": true
+}

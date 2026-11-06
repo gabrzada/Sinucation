@@ -1,0 +1,1118 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using FriendSlop.Core;
+using FriendSlop.Match;
+using FriendSlop.Net;
+using UnityEngine;
+
+namespace FriendSlop.Presentation
+{
+    /// <summary>
+    /// Piloto automático para testes de rede em builds reais (activado só por argumentos -fs*).
+    /// Joga pelos mesmos comandos de rede que um humano, tira screenshots e escreve um relatório final
+    /// para comparar se todos os clientes chegaram ao mesmo resultado (NFR-001).
+    /// Ex.: -fsHost 7790 -fsBots 1 -fsStartWhen 4 -fsAutoplay -fsReport host.json
+    ///      -fsJoin 127.0.0.1:7790 -fsAutoplay -fsReport c1.json -fsShots shots
+    /// </summary>
+    public sealed partial class AutoPilot : MonoBehaviour
+    {
+        /// <summary>Com 'Enter Play Mode Options' (sem recarregar o domínio) os estáticos sobrevivem entre Plays: repõe-os.</summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticsOnPlay()
+        {
+            Active = false;
+        }
+
+        public static bool Active { get; private set; }
+
+        readonly Dictionary<string, string> _args = new Dictionary<string, string>();
+        readonly HashSet<string> _shots = new HashSet<string>();
+        readonly System.Random _rng = new System.Random(Environment.TickCount);
+        GameBootstrap _game;
+        float _time;
+        float _actionTimer;
+        int _actedKey = int.MinValue;
+        bool _started;
+        bool _reported;
+        bool _settingsSent;
+        float _overTime = -1f;
+        int _aimShots;
+        string _pendingShot;
+        float _pendingShotAt;
+        int _completedMatches;
+        bool _restarting;
+        bool _qaCueResetSent; int _qaPreviousSequence = -1;
+        bool _firstFrame = true;
+        BotShot _aimPlan;
+        readonly List<float> _frameTimes = new List<float>();
+
+        public static bool HasArguments()
+        {
+            foreach (var a in Environment.GetCommandLineArgs())
+                if (a.StartsWith("-fs", StringComparison.Ordinal)) return true;
+            return false;
+        }
+
+        void Awake()
+        {
+            Active = true;
+            _game = GetComponent<GameBootstrap>();
+            var argv = Environment.GetCommandLineArgs();
+            for (int i = 0; i < argv.Length; i++)
+            {
+                if (!argv[i].StartsWith("-fs", StringComparison.Ordinal)) continue;
+                string value = i + 1 < argv.Length && !argv[i + 1].StartsWith("-", StringComparison.Ordinal) ? argv[i + 1] : "";
+                _args[argv[i]] = value;
+            }
+            if (_args.TryGetValue("-fsName", out string name) && !string.IsNullOrEmpty(name))
+            {
+                _game.Settings.PlayerName = name;
+                // Cada instância de teste com forma/cor diferentes (as PlayerPrefs são partilhadas na mesma máquina).
+                int hash = 0;
+                foreach (char ch in name) hash = hash * 31 + ch;
+                hash = Math.Abs(hash);
+                _game.Settings.Archetype = hash % 3;
+                _game.Settings.ColorIndex = (hash / 3) % ArtPalette.Heads.Length;
+            }
+            _game.Settings.PlayerKey = Guid.NewGuid().ToString("N");
+            _game.Settings.CameraMotion = 2;
+            if (Has("-fsGI")) _game.Settings.Graphics.GlobalIllumination = IntArg("-fsGI", 0) != 0;
+            if (Has("-fsGI")) GraphicsQuality.Apply(_game.Rig.Camera);
+            if (Has("-fsUpscaler"))
+            {
+                _game.Settings.Graphics.Upscaler = IntArg("-fsUpscaler", 0);
+                _game.Settings.Graphics.RenderScale = IntArg("-fsScale", 65) / 100f;
+                GraphicsQuality.Apply(_game.Rig.Camera);
+            }
+            if (Has("-fsStyle")) { _game.Settings.Graphics.CelShading = IntArg("-fsStyle", 0); GraphicsQuality.Apply(_game.Rig.Camera); }
+            if (Has("-fsArchetype")) _game.Settings.Archetype = Mathf.Clamp(IntArg("-fsArchetype", 0),0,2);
+            // -fsNoHud: capturas limpas para a página da loja (sem interface).
+            if (Has("-fsNoHud")) HudView.DebugHideAll = true;
+            Application.runInBackground = true;
+            Log("autopilot args: " + string.Join(" ", argv));
+        }
+
+        int _gcAtStart, _remoteSamples, _remoteStalls, _remoteJumps, _remoteTeleports, _hitchLogs;
+        readonly Dictionary<ulong, Queue<(float t, Vector3 p)>> _remoteHistory = new Dictionary<ulong, Queue<(float, Vector3)>>();
+        readonly Dictionary<ulong, Vector3> _remotePrev = new Dictionary<ulong, Vector3>();
+
+        /// <summary>
+        /// Suavidade dos jogadores remotos vistos por este cliente: com a velocidade medida nos últimos 0,25 s acima de
+        /// 0,8 m/s, conta frames em que o boneco quase não anda (&lt;20% do esperado — interpolação sem dados) ou salta
+        /// (&gt;3× o esperado — correcção brusca).
+        /// </summary>
+        // Depois de todos os Update (incluindo o NetworkTransform): mede a posição final de cada frame.
+        void LateUpdate() => SampleRemotePlayers(Time.unscaledDeltaTime);
+
+        void SampleRemotePlayers(float dt)
+        {
+            if (dt <= 0f || _time < 5f) return;
+            foreach (var p in NetPlayer.All)
+            {
+                if (p == null || !p.IsSpawned || p.IsOwner) continue;
+                Vector3 pos = p.transform.position;
+                if (!_remoteHistory.TryGetValue(p.OwnerClientId, out var hist)) _remoteHistory[p.OwnerClientId] = hist = new Queue<(float, Vector3)>();
+                // Um teletransporte (entrar na tacada, levantar-se do ragdoll…) é um salto de um frame, contado à parte;
+                // recomeça a janela para a distância teletransportada não inflacionar a velocidade (e as "paragens").
+                if (_remotePrev.TryGetValue(p.OwnerClientId, out var last) && Vector3.Distance(pos, last) > 0.4f)
+                {
+                    _remoteTeleports++;
+                    hist.Clear();
+                }
+                hist.Enqueue((_time, pos));
+                while (hist.Count > 2 && _time - hist.Peek().t > 0.25f) hist.Dequeue();
+                if (_remotePrev.TryGetValue(p.OwnerClientId, out var prev) && hist.Count > 2)
+                {
+                    var oldest = hist.Peek();
+                    float window = _time - oldest.t;
+                    float speed = window > 0.1f ? Vector3.Distance(pos, oldest.p) / window : 0f;
+                    float step = Vector3.Distance(pos, prev);
+                    if (speed > 0.8f && step < 2f)
+                    {
+                        _remoteSamples++;
+                        float expected = speed * dt;
+                        if (step < expected * 0.2f) _remoteStalls++;
+                        else if (step > expected * 3f && ++_remoteJumps <= 8)
+                            Log($"[Remote] salto {step:F2} m (esperado {expected:F3}) pose={p.Pose} fase={(NetGame.Instance != null && NetGame.Instance.HasSnapshot ? NetGame.Instance.View.Phase.ToString() : "-")}");
+                    }
+                }
+                _remotePrev[p.OwnerClientId] = pos;
+            }
+        }
+
+        int _resCheckStep = -1;
+        float _resCheckAt;
+        int _youtubeStep;
+        bool _feedHooked;
+        float _youtubeLogAt;
+
+        // -fsFilmBot <pasta>: filma turnos de bots (20 fps fixos, câmara lateral) do início do turno até depois da
+        // tacada, para rever aproximação → pose → mira → recuo → contacto → follow-through → neutro.
+        Camera _filmCam;
+        RenderTexture _directFilmTexture;
+        int _filmTurns, _filmFrame, _filmShooter = -1, _filmShot = -1;
+        float _filmStop = -1f;
+
+        // -fsFilmRisk <pasta>: filma a roleta (gatilho e revelação) de um bot, de frente, a 20 fps.
+        int _riskFilmTarget = -1, _riskFilmFrame, _riskFilms;
+        float _riskFilmStop = -1f;
+        string _riskFilmEvent;
+
+        void UpdateRiskFilm(NetGame net, MatchView view)
+        {
+            string dir = Arg("-fsFilmRisk");
+            if (_riskFilmTarget < 0)
+            {
+                var p = view.GetPlayer(view.Selected);
+                bool self = p != null && net.LocalPlayer != null && p.Id == net.LocalPlayer.Id;
+                if (_riskFilms >= IntArg("-fsFilmTurns", 2) || view.Phase != MatchPhase.AwaitTrigger || p == null || (!p.IsBot && !self) || view.RiskEventId == _riskFilmEvent) return;
+                // O próprio jogador também: mostra o corpo (normalmente escondido na primeira pessoa) à câmara do filme.
+                NetPlayer.DebugShowSelf = self;
+                Directory.CreateDirectory(dir);
+                _riskFilmTarget = p.Id;
+                _riskFilmEvent = view.RiskEventId;
+                _riskFilmFrame = 0;
+                _riskFilmStop = -1f;
+                Time.captureFramerate = 20;
+                HudView.DebugHideAll = true;
+                if (_filmCam == null)
+                {
+                    _filmCam = new GameObject("FilmCam").AddComponent<Camera>();
+                    _filmCam.fieldOfView = 42f;
+                    _filmCam.nearClipPlane = 0.05f;
+                    _filmCam.depth = 50f;
+                }
+                _filmCam.enabled = true;
+                Log("filme roleta: " + p.Name);
+            }
+            var avatar = AvatarLocator.Find(net, _riskFilmTarget);
+            if (avatar != null && avatar.Head != null)
+            {
+                var body = avatar.transform.parent;
+                Vector3 head = avatar.Head.position;
+                // De frente e um pouco à direita (lado do revólver), à altura da cabeça.
+                Vector3 want = body.position + body.forward * 1.5f + body.right * 0.9f + Vector3.up * 1.05f;
+                _filmCam.transform.position = want;
+                _filmCam.transform.rotation = Quaternion.LookRotation(Vector3.Lerp(head, body.position + Vector3.up * 0.7f, 0.35f) - want);
+            }
+            ScreenCapture.CaptureScreenshot(Path.Combine(dir, "r" + _riskFilms + "_" + _riskFilmFrame.ToString("0000") + "_" + view.Phase + ".png"));
+            _riskFilmFrame++;
+            if (view.Phase != MatchPhase.AwaitTrigger && view.Phase != MatchPhase.RiskReveal && _riskFilmStop < 0f) _riskFilmStop = _time + 0.5f;
+            if ((_riskFilmStop >= 0f && _time >= _riskFilmStop) || _riskFilmFrame > 400)
+            {
+                Log("filme roleta: " + _riskFilmFrame + " fotogramas");
+                _riskFilms++;
+                _riskFilmTarget = -1;
+                Time.captureFramerate = 0;
+                HudView.DebugHideAll = false; NetPlayer.DebugShowSelf = false;
+                _filmCam.enabled = false;
+            }
+        }
+
+        void UpdateBotFilm(NetGame net, MatchView view)
+        {
+            string dir = Arg("-fsFilmBot");
+            if (_filmShooter < 0)
+            {
+                var shooter = view.GetPlayer(view.CurrentPlayer);
+                if (_filmTurns >= IntArg("-fsFilmTurns", 2) || view.Phase != MatchPhase.AwaitShot || shooter == null || !shooter.IsBot) return;
+                Directory.CreateDirectory(dir);
+                _filmShooter = shooter.Id;
+                _filmShot = view.ShotSequence;
+                _filmStop = -1f;
+                _filmFrame = 0;
+                Time.captureFramerate = 20;
+                HudView.DebugHideAll = true;
+                if (_filmCam == null)
+                {
+                    _filmCam = new GameObject("FilmCam").AddComponent<Camera>();
+                    _filmCam.fieldOfView = 42f;
+                    _filmCam.nearClipPlane = 0.05f;
+                    _filmCam.depth = 50f;
+                }
+                _filmCam.enabled = true;
+                Log("filme: turno do bot " + shooter.Name);
+            }
+
+            var avatar = AvatarLocator.Find(net, _filmShooter);
+            if (avatar != null && net.Mirror.Cue != null)
+            {
+                var body = avatar.transform.parent;
+                Vector3 cue = TableView.ToWorld(net.Mirror.Cue.Position, 0.03f);
+                Vector3 mid = Vector3.Lerp(body.position + Vector3.up * 0.7f, cue, 0.35f);
+                // À frente e à direita do jogador, de cima (como as fotos de referência): braço do taco, ponte e branca.
+                Vector3 want = body.position + body.right * 1.5f + body.forward * 1.5f + Vector3.up * 1.7f;
+                _filmCam.transform.position = _filmFrame == 0 ? want : Vector3.Lerp(_filmCam.transform.position, want, 0.2f);
+                _filmCam.transform.rotation = Quaternion.LookRotation(mid - _filmCam.transform.position);
+            }
+            var filmPath=Path.Combine(dir, "t" + _filmTurns + "_" + _filmFrame.ToString("0000") + "_" + view.Phase + ".png");
+            if (Has("-fsDirectFilm"))
+            {
+                if (_directFilmTexture == null) _directFilmTexture = new RenderTexture(960, 540, 24);
+                var previous=RenderTexture.active;var oldTarget=_filmCam.targetTexture;
+                _filmCam.targetTexture=_directFilmTexture;_filmCam.Render();RenderTexture.active=_directFilmTexture;
+                var pixels=new Texture2D(960,540,TextureFormat.RGB24,false);
+                pixels.ReadPixels(new Rect(0,0,960,540),0,0);pixels.Apply();File.WriteAllBytes(filmPath,pixels.EncodeToPNG());
+                Destroy(pixels);RenderTexture.active=previous;_filmCam.targetTexture=oldTarget;
+            }
+            else ScreenCapture.CaptureScreenshot(filmPath);
+            _filmFrame++;
+
+            bool shotDone = view.ShotSequence != _filmShot && (view.Phase == MatchPhase.ShotResult || view.Phase == MatchPhase.RoundWon || view.CurrentPlayer != _filmShooter);
+            if (shotDone && _filmStop < 0f) _filmStop = _time + 1.2f;
+            if ((_filmStop >= 0f && _time >= _filmStop) || _filmFrame > 900)
+            {
+                Log("filme: " + _filmFrame + " fotogramas do turno " + _filmTurns);
+                _filmTurns++;
+                _filmShooter = -1;
+                Time.captureFramerate = 0;
+                HudView.DebugHideAll = false;
+                _filmCam.enabled = false;
+                if (_directFilmTexture != null) { _directFilmTexture.Release(); Destroy(_directFilmTexture); _directFilmTexture = null; }
+            }
+        }
+
+        /// <summary>
+        /// QA da jukebox online: -fsYouTube "link1|link2" activa o player oficial e põe os links na fila (um a cada 10 s,
+        /// por causa do limite anti-spam); regista o estado partilhado e tira capturas do painel.
+        /// </summary>
+        void UpdateYouTubeTest(NetGame net)
+        {
+            // -fsJukeboxShots: fotografa o painel da jukebox na rádio (antes do YouTube) e no YouTube (com vídeo).
+            if (Has("-fsJukeboxShots"))
+            {
+                var box = FindAnyObjectByType<JukeboxStation>();
+                if (box != null && _time >= 9f && _shots.Add("jb_open_radio")) { _game.Interaction.DebugOpen(box); Schedule("jukebox_radio", 1.5f, true); }
+                var player = OnlineMusicPlayer.Instance;
+                if (box != null && net.View.Music.Online.Current != null && player != null && player.Enabled && _time > 30f && _shots.Add("jb_open_yt"))
+                {
+                    _game.Interaction.Close();
+                    _game.Interaction.DebugOpen(box);
+                    _game.Hud.ShowOnlineMusicTab();
+                    Schedule("jukebox_youtube", 4f, true);
+                }
+            }
+            if (!Has("-fsYouTube") || _time < 8f) return;
+            // "watch": só activa o player e regista o estado (clientes que entram numa sala com música).
+            var links = Arg("-fsYouTube") == "watch" ? new string[0] : Arg("-fsYouTube").Split('|');
+            if (_youtubeStep == 0)
+            {
+                net.MusicNotice += text => Log("jukebox aviso: " + text);
+                net.Toast += text => Log("toast: " + text);
+                // -fsJukeboxVolume 0.05: testes com som baixo (só em memória — não grava as definições do jogador).
+                if (Has("-fsJukeboxVolume") && float.TryParse(Arg("-fsJukeboxVolume"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float volume))
+                {
+                    _game.Settings.JukeboxVolume = Mathf.Clamp01(volume);
+                    _game.Settings.JukeboxMuted = false;
+                }
+                OnlineMusicPlayer.Instance?.EnablePlayer();
+                _youtubeStep = 1;
+                _youtubeLogAt = _time + 6f;
+            }
+            int index = _youtubeStep - 1;
+            if (index < links.Length && _time >= 8f + 4f + index * 10f)
+            {
+                Log("jukebox: a adicionar " + links[index]);
+                net.AddYouTube(links[index]);
+                _youtubeStep++;
+            }
+            // -fsYouTubeControls: o anfitrião salta, pausa e retoma (depois de todos os links).
+            float controlsAt = 8f + 4f + links.Length * 10f + 12f;
+            if (Has("-fsYouTubeControls") && net.IsServer)
+            {
+                if (_time >= controlsAt && _shots.Add("yt_next")) { Log("jukebox: PRÓXIMA"); net.ControlOnlineMusic(FriendSlop.Core.OnlineMusicCommand.Next); }
+                if (_time >= controlsAt + 12f && _shots.Add("yt_pause")) { Log("jukebox: PAUSA"); net.ControlOnlineMusic(FriendSlop.Core.OnlineMusicCommand.PlayPause); }
+                if (_time >= controlsAt + 20f && _shots.Add("yt_play")) { Log("jukebox: PLAY"); net.ControlOnlineMusic(FriendSlop.Core.OnlineMusicCommand.PlayPause); }
+            }
+            if (_time >= _youtubeLogAt)
+            {
+                _youtubeLogAt = _time + 5f;
+                var s = net.View.Music.Online;
+                var player = OnlineMusicPlayer.Instance;
+                Log("jukebox: atual=" + (s.Current != null ? s.Current.VideoId + " \"" + s.Current.Title + "\" " + s.Position(net.NetworkManager.ServerTime.Time).ToString("0") + "/" + s.Current.Duration.ToString("0") + "s" : "-") +
+                    " fila=" + s.Queue.Count + " rev=" + s.Revision + " player=" + (player != null ? (player.Enabled ? "on" : player.Failed ? "falhou" : "off") + " vol=" + player.SpatialVolume.ToString("0.00") + " \"" + player.Status + "\" página=" + player.PlayerDiagnostic + (player.ErrorCode != 0 ? " erro=" + player.ErrorCode : "") : "-"));
+                if (s.Current != null && Has("-fsYouTubePanel") && _game.Interaction.Active == null)
+                {
+                    var box = FindAnyObjectByType<JukeboxStation>();
+                    if (box != null) { _game.Interaction.DebugOpen(box); _game.Hud.ShowOnlineMusicTab(); }
+                }
+                if (s.Current != null) Schedule("youtube_" + (int)(_time / 20f), 1.5f, true);
+            }
+        }
+
+        /// <summary>(upscaler, modo do SDK, escala de render) de cada passo do teste comparativo de resolução.</summary>
+        static readonly (int upscaler, int mode, float scale)[] UpscalerSteps =
+        {
+            (0, 1, 1f), (0, 1, 0.5f), (2, 1, 0.67f), (2, 1, 0.5f),
+            (3, 0, 1f), (3, 1, 1f), (3, 2, 1f), (3, 3, 1f), (3, 4, 1f),
+            (5, 1, 1f), (5, 3, 1f), (4, 1, 1f), (0, 1, 1f)
+        };
+
+        bool Has(string key) => _args.ContainsKey(key);
+        string Arg(string key) => _args.TryGetValue(key, out string v) ? v : "";
+        int IntArg(string key, int fallback) => int.TryParse(Arg(key), out int v) ? v : fallback;
+
+        static void Log(string message) => Debug.Log("[AutoPilot] " + message);
+
+        void Update()
+        {
+            float dt = _firstFrame ? 0f : Time.unscaledDeltaTime;
+            _firstFrame = false;
+            _time += dt;
+            if (_time > 3f) _frameTimes.Add(dt * 1000f);
+            else _gcAtStart = System.GC.CollectionCount(0);
+            if (_time > 3f && dt > 0.04f && _hitchLogs++ < 40)
+            {
+                var hn = NetGame.Instance;
+                Log("[Hitch] " + (dt * 1000f).ToString("0") + " ms t=" + _time.ToString("0.0") + " fase=" + (hn != null && hn.HasSnapshot ? hn.View.Phase.ToString() : "-") +
+                    " gc0=" + System.GC.CollectionCount(0) + " ecrã=" + _game.Screen + (_game.Hud != null && _game.Hud.LoadingVisible ? " (sob o modal)" : ""));
+            }
+            if (Has("-fsUpscalerCycle"))
+            {
+                // Teste comparativo: cada passo muda o upscaler/modo/escala, espera o histórico temporal assentar,
+                // regista a resolução interna REAL medida no render graph e tira uma captura.
+                const float stepSeconds = 7f;
+                int step = (int)((_time - 6f) / stepSeconds);
+                var steps = UpscalerSteps;
+                if (_time > 6f && step < steps.Length && _shots.Add("upscaler_step_" + step))
+                {
+                    var (upscaler, mode, scale) = steps[step];
+                    _game.Settings.Graphics.Upscaler = upscaler;
+                    _game.Settings.Graphics.UpscalerQuality = mode;
+                    _game.Settings.Graphics.RenderScale = scale;
+                    GraphicsQuality.Apply(_game.Rig.Camera);
+                    _resCheckStep = step;
+                    _resCheckAt = _time + stepSeconds - 1.5f;
+                    Schedule("upscaler_" + step + "_" + UpscalerController.Ids[upscaler] + "_m" + mode + "_s" + Mathf.RoundToInt(scale * 100f), stepSeconds - 2f, true);
+                }
+                if (_resCheckStep >= 0 && _time >= _resCheckAt)
+                {
+                    var (upscaler, mode, scale) = steps[_resCheckStep];
+                    Log("[ResCheck] passo " + _resCheckStep + " pedido=" + UpscalerController.Names[upscaler] + " modo=" + mode + " escala=" + scale.ToString("0.00", CultureInfo.InvariantCulture) +
+                        " → " + UpscalerController.Status + " " + RenderResolutionMonitor.Status);
+                    _resCheckStep = -1;
+                }
+            }
+            if (Has("-fsQuit") && _time > IntArg("-fsQuit", 600)) Quit("tempo limite");
+            if (_restarting) return;
+
+            if (Has("-fsPortraits") && !_started) UpdatePortraits();
+            else if (Has("-fsMenuShots") && !_started) UpdateMenuTour();
+            float startAt = Has("-fsPortraits") ? 5f + Portraits.Length * 1.5f : Has("-fsMenuShots") ? 9.5f : 1f;
+            if (!_started && _time > startAt)
+            {
+                _started = true;
+                StartSession();
+            }
+
+            if (_pendingShot != null && _time >= _pendingShotAt)
+            {
+                Capture(_pendingShot);
+                _pendingShot = null;
+            }
+
+            var net = NetGame.Instance;
+            if (net == null || !net.HasSnapshot) return;
+            var view = net.View;
+            if (_qaPreviousSequence > view.ShotSequence) { _actedKey = int.MinValue; _aiming = _placed = false; Log("[QaCueReset] sequence restarted " + _qaPreviousSequence + " -> " + view.ShotSequence); }
+            _qaPreviousSequence = view.ShotSequence;
+            if (Has("-fsCueReset") && !_qaCueResetSent && net.IsLocalHost && view.ShotSequence >= 3 && view.Phase == MatchPhase.AwaitShot)
+            { _qaCueResetSent = true; Log("[QaCueReset] requesting reset"); net.HostResetMatch(); return; }
+            if (!_feedHooked)
+            {
+                // Regista faltas e bola na mão em cada processo (anfitrião e clientes) para verificar a regra em rede.
+                _feedHooked = true;
+                net.Feed += (text, kind) => { if (text.Contains("Falta") || text.Contains("bola na mão")) Log("[Feed] " + text); };
+            }
+            UpdateYouTubeTest(net);
+            UpdatePanelTest(net);
+            if (Has("-fsOnlineHost") && net.IsLocalHost && !string.IsNullOrEmpty(view.JoinCode))
+                File.WriteAllText(Arg("-fsOnlineHost"), view.JoinCode);
+            if (Has("-fsFilmBot")) UpdateBotFilm(net, view);
+            if (Has("-fsFilmRisk")) UpdateRiskFilm(net, view);
+
+            if (!view.InMatch)
+            {
+                UpdateLobby(net);
+                return;
+            }
+
+            if (Has("-fsSessionIsolation"))
+            {
+                if (!_sessionIsolationStarted && net.IsLocalHost)
+                {
+                    _sessionIsolationStarted = true;
+                    StartCoroutine(SessionIsolationProbe(net));
+                }
+                return;
+            }
+            if (Has("-fsWalletRecovery"))
+            {
+                if (net.IsLocalHost && !_sessionIsolationFunded)
+                {
+                    _sessionIsolationFunded = true;
+                    foreach (var p in net.ServerDirector.Players) p.Coins = 240;
+                }
+                if (!net.IsLocalHost && !_sessionIsolationStarted)
+                {
+                    _sessionIsolationStarted = true;
+                    StartCoroutine(WalletRecoveryProbe(net));
+                }
+                return;
+            }
+            if (Has("-fsGoalProbe"))
+            {
+                if (!_goalProbeStarted && net.IsLocalHost && net.LocalPlayer != null && view.CurrentPlayer == net.LocalPlayer.Id && view.Phase == MatchPhase.AwaitShot)
+                {
+                    _goalProbeStarted = true;
+                    StartCoroutine(GoalProbe(net));
+                }
+                return;
+            }
+
+            if (_qaMatchStartedAt < 0f) _qaMatchStartedAt = _time;
+            if (Has("-fsBuyChaos")) UpdateGoalPurchase(net);
+            if (Has("-fsDropAfter") && !_qaDropped && !net.IsLocalHost && _time - _qaMatchStartedAt > IntArg("-fsDropAfter", 3))
+            {
+                _qaDropped = true;
+                Log("[GoalQA] injecting client transport loss; player=" + net.LocalPlayer?.Id + " round=" + view.RoundIndex);
+                _game.Network.Shutdown();
+                return;
+            }
+
+            if (view.Phase == MatchPhase.MatchOver)
+            {
+                if (_overTime < 0f) _overTime = _time;
+                if (!_reported)
+                {
+                    _reported = true;
+                    WriteReport(net);
+                    Schedule("results", 0.5f);
+                }
+                UpdateFunTest(net, view);
+                if (_time - _overTime > (Has("-fsFun") ? (net.IsLocalHost ? 26f : 22f) : net.IsLocalHost ? 8f : 4f))
+                {
+                    _completedMatches++;
+                    if (_completedMatches < IntArg("-fsMatches",1)) StartCoroutine(RestartSession());
+                    else Quit("partidas terminadas: " + _completedMatches);
+                }
+                return;
+            }
+
+            if (view.Phase == MatchPhase.PunishmentDraw) Schedule("punishment", 1.2f);
+            if (view.Phase == MatchPhase.RiskReveal) Schedule("reveal" + view.RoundIndex, 1.6f);
+            if (view.Phase == MatchPhase.RoundIntro) Schedule("round" + view.RoundIndex, 0.8f);
+            // Eliminado: fotografa o ecrã "ESTÁS FORA", fecha-o e fotografa o modo espectador.
+            var meNow = net.LocalPlayer;
+            // Teste do modo espectador: o próprio jogador desiste na primeira tacada da ronda 1.
+            // Sequência de capturas em terceira pessoa (modo espectador) para rever animações.
+            if (Has("-fsBurst") && _game.Spectator != null && _game.Spectator.ControlsCamera && _burst < IntArg("-fsBurst", 30) && _time > _burstAt)
+            {
+                _burstAt = _time + 0.45f;
+                if (Has("-fsBurstSide")) _game.Spectator.DebugOrbit(IntArg("-fsBurstSide", 80), 8f, 2.4f);
+                _burst++;
+                Capture("burst" + _burst.ToString("00"));
+            }
+            if (Has("-fsEliminateMe") && meNow != null && !meNow.Eliminated && view.Phase == MatchPhase.AwaitShot && _time > 20f && net.ServerDirector != null)
+                net.ServerDirector.Forfeit(meNow.Id, "teste de espectador");
+            if (meNow != null && meNow.Eliminated && view.Phase != MatchPhase.MatchOver)
+            {
+                Schedule("eliminated", 1.5f);
+                if (_shots.Contains("eliminated") && _pendingShot == null && _elimSeenAt < 0f) _elimSeenAt = _time;
+                if (_elimSeenAt >= 0f && _time > _elimSeenAt + 1.5f && !_shots.Contains("spectator_open"))
+                {
+                    _shots.Add("spectator_open");
+                    _game.Hud.HandleBack();
+                    Schedule("spectator", 2.5f, true);
+                }
+            }
+            if (view.Phase == MatchPhase.Shop) Schedule("shop", 0.6f);
+            if (view.Phase == MatchPhase.Simulating) Schedule("spectate", 0.4f);
+
+            if (_foulsLeft < 0) _foulsLeft = IntArg("-fsFoul", 0);
+            UpdatePingTest(net);
+            if (Has("-fsAutoplay")) UpdateAutoplay(net, view, dt);
+        }
+
+        static readonly (int shape, int color, int hat, int accessory)[] Portraits =
+        {
+            (0, 0, 0, 0), (1, 1, 0, 1), (2, 2, 0, 2), (0, 3, 2, 3), (1, 4, 2, 4), (2, 5, 2, 5), (0, 6, 3, 0), (1, 7, 3, 1), (2, 0, 3, 2), (0, 1, 4, 3), (1, 2, 4, 4), (2, 3, 4, 5), (0, 4, 5, 0), (1, 5, 5, 1), (2, 6, 5, 2),
+        };
+
+        /// <summary>-fsPortraits: mostra várias combinações na personagem de montra do menu e fotografa cada uma.</summary>
+        void UpdatePortraits()
+        {
+            for (int i = 0; i < Portraits.Length; i++)
+            {
+                float at = 3f + i * 1.5f;
+                if (_time < at || _shots.Contains("pset" + i)) continue;
+                _shots.Add("pset" + i);
+                var s = _game.Settings;
+                (s.Archetype, s.ColorIndex, s.HatId, s.AccessoryId) = Portraits[i];
+                _game.Hud.DebugShow("hidden");
+                _pendingShot = null;
+                Schedule("portrait" + (i + 1), 1.0f, true);
+            }
+        }
+
+        /// <summary>Percorre os ecrãs do menu e tira screenshots (verificação visual dos concepts).</summary>
+        void UpdateMenuTour()
+        {
+            string[] pages = { "main", "multiplayer", "create", "customize", "settings" };
+            for (int i = 0; i < pages.Length; i++)
+            {
+                float at = 1.2f + i * 1.6f;
+                if (_time >= at && !_shots.Contains("page_" + pages[i]))
+                {
+                    _shots.Add("page_" + pages[i]);
+                    _game.Hud.DebugShow(pages[i]);
+                    _pendingShot = null;
+                    Schedule("menu_" + pages[i], 0.9f, true);
+                }
+            }
+            if (_time >= 1.2f + pages.Length * 1.6f && !_shots.Contains("page_done"))
+            {
+                _shots.Add("page_done");
+                _game.Hud.DebugShow("main");
+                Schedule("menu_main_loaded", 0.8f, true);
+            }
+        }
+
+        void StartSession()
+        {
+            if (Has("-fsOnlineHost"))
+                _game.HostRoom(new RoomRequest { Name = "FriendSlop QA", Online = true, Private = true, MaxPlayers = 2 });
+            else if (Has("-fsOnlineJoin"))
+                _game.JoinOnline(Arg("-fsOnlineJoin"));
+            else if (Has("-fsPractice"))
+            {
+                _game.StartPractice(IntArg("-fsPractice", 3));
+            }
+            else if (Has("-fsHost"))
+            {
+                _game.HostLan((ushort)IntArg("-fsHost", 7790), "127.0.0.1", IntArg("-fsBots", 0));
+            }
+            else if (Has("-fsJoin"))
+            {
+                string[] parts = Arg("-fsJoin").Split(':');
+                ushort port = parts.Length > 1 && ushort.TryParse(parts[1], out ushort p) ? p : SessionService.DefaultPort;
+                _game.JoinLan(parts[0], port);
+            }
+            Log("sessão iniciada");
+        }
+
+        static readonly (Vector3 pos, float yaw, float pitch)[] TourPoses =
+        {
+            (new Vector3(0f, 0.05f, -3.2f), 0f, 10f),       // 1 mesa e roleta ao fundo
+            (new Vector3(0f, 0.05f, 2.4f), 0f, -6f),        // 2 máquina da roleta de perto
+            (new Vector3(-4.2f, 0.05f, 3.6f), -27f, 2f),    // 3 máquina de bolas
+            (new Vector3(-4.8f, 0.05f, -1.2f), -108f, 6f),  // 4 máquina de pastilhas
+            (new Vector3(-4.9f, 0.05f, 2.4f), -67f, 0f),    // 5 jukebox
+            (new Vector3(4.3f, 0.05f, -0.6f), 107f, 0f),    // 6 máquina de sabotagem
+            (new Vector3(-3.4f, 0.05f, -3.3f), -137f, 8f),  // 7 bar
+            (new Vector3(2.8f, 0.05f, -3.0f), -147f, 6f),   // 8 lounge e TV
+            (new Vector3(3.3f, 0.05f, -2.2f), 124f, 4f),    // 9 armazém
+            (new Vector3(-2.4f, 0.05f, 1.6f), 124f, -12f),  // 10 candeeiros sobre a mesa
+            (new Vector3(1.8f, 0.05f, 2.6f), -150f, 10f),   // 11 bots à volta da mesa
+        };        int _tourIndex = -1;
+        float _tourTimer;
+
+        /// <summary>-fsTour: percorre pontos da arena na sala de espera e fotografa cada um.</summary>
+        bool UpdateTour()
+        {
+            if (!Has("-fsTour") || NetPlayer.Local == null) return false;
+            if (_tourIndex >= TourPoses.Length) return false;
+            _tourTimer -= Time.unscaledDeltaTime;
+            if (_tourTimer > 0f) return true;
+            _tourIndex++;
+            if (_tourIndex >= TourPoses.Length) return false;
+            var pose = TourPoses[_tourIndex];
+            NetPlayer.Local.TeleportTo(pose.pos, pose.yaw);
+            NetPlayer.Local.SetLook(pose.yaw, pose.pitch);
+            Schedule("tour" + (_tourIndex + 1), 1.2f, true);
+            _tourTimer = 2f;
+            return true;
+        }
+
+        bool _labLaunched;
+
+        // -fsGICheck <pasta>: câmara fixa na sala; 12 quadros parados + varrimento lateral (ghosting/atraso da luz),
+        // com a GI ligada e depois desligada, na mesma execução. Depois sai.
+        int _giStep = -1, _giFrame;
+        float _giWait;
+
+        bool UpdateGICheck()
+        {
+            if (!Has("-fsGICheck") || NetPlayer.Local == null || _time < 6f) return false;
+            string dir = Arg("-fsGICheck");
+            var g = _game.Settings.Graphics;
+            if (_giStep < 0)
+            {
+                Directory.CreateDirectory(dir);
+                _giStep = 0;
+                g.GlobalIllumination = true;
+                GraphicsQuality.Apply(_game.Rig.Camera);
+                _giWait = _time + 6f;
+                Time.captureFramerate = 20;
+                HudView.DebugHideAll = true;
+            }
+            var pos = new Vector3(0.6f, 0.05f, -3.4f);
+            if (_time < _giWait) { NetPlayer.Local.TeleportTo(pos, 0f); NetPlayer.Local.SetLook(0f, 14f); _giFrame = 0; return true; }
+            string tag = g.GlobalIllumination ? "gi" : "nogi";
+            // 0–11 parado; 12–51 varrimento de −35° a +35° e volta (2 s).
+            float yaw = _giFrame < 12 ? 0f : Mathf.Sin((_giFrame - 12) / 40f * Mathf.PI * 2f) * 35f;
+            NetPlayer.Local.TeleportTo(pos, yaw);
+            NetPlayer.Local.SetLook(yaw, 14f);
+            ScreenCapture.CaptureScreenshot(Path.Combine(dir, tag + "_" + _giFrame.ToString("000") + ".png"));
+            _giFrame++;
+            if (_giFrame < 52) return true;
+            if (g.GlobalIllumination)
+            {
+                g.GlobalIllumination = false;
+                GraphicsQuality.Apply(_game.Rig.Camera);
+                _giWait = _time + 4f;
+                return true;
+            }
+            Time.captureFramerate = 0;
+            Quit("GI check terminado");
+            return true;
+        }
+
+        // -fsWander: o jogador local anda sozinho na sala de espera (andar, parar, trocar de direcção, correr, de lado,
+        // para trás) — os outros processos vêem a animação remota. -fsWatchPeer <pasta>: filma o primeiro jogador remoto.
+        static readonly (float until, Vector2 move, bool sprint, float yawRate)[] WanderScript =
+        {
+            (1.5f, Vector2.zero, false, 0f), (4f, Vector2.up, false, 0f), (4.8f, Vector2.zero, false, 0f), (6.5f, Vector2.up, false, 60f),
+            (8f, Vector2.up, true, 0f), (8.6f, Vector2.zero, false, 0f), (10f, Vector2.right, false, 0f), (11.5f, Vector2.down, false, 0f),
+            (12.1f, Vector2.up, false, 0f), (12.7f, Vector2.down, false, 0f), (13.3f, Vector2.up, false, 0f), (14.5f, Vector2.zero, false, 90f),
+            (16f, new Vector2(0.7f, 0.7f), false, -40f), (17f, Vector2.zero, false, 0f),
+        };
+        float _wanderStart = -1f;
+        int _watchFrame = -1;
+
+        void UpdateWander()
+        {
+            var local = NetPlayer.Local;
+            if (!Has("-fsWander") || local == null || _time < 8f) return;
+            if (_wanderStart < 0f)
+            {
+                _wanderStart = _time;
+                local.TeleportTo(new Vector3(-3.4f, 0.05f, -1.95f), 90f);
+            }
+            float t = (_time - _wanderStart) % 18f;
+            foreach (var step in WanderScript)
+            {
+                if (t >= step.until) continue;
+                NetPlayer.DebugMove = step.move;
+                NetPlayer.DebugSprint = step.sprint;
+                if (step.yawRate != 0f) local.SetLook(local.Yaw + step.yawRate * Time.deltaTime, 10f);
+                return;
+            }
+            NetPlayer.DebugMove = Vector2.zero;
+        }
+
+        void UpdateWatchPeer()
+        {
+            if (!Has("-fsWatchPeer") || _time < 12f || _watchFrame >= 400) return;
+            NetPlayer peer = null;
+            foreach (var p in NetPlayer.All)
+                if (p != null && p != NetPlayer.Local && p.Visual != null) peer = p;
+            if (peer == null) return;
+            string dir = Arg("-fsWatchPeer");
+            if (_watchFrame < 0)
+            {
+                Directory.CreateDirectory(dir);
+                _watchFrame = 0;
+                Time.captureFramerate = 20;
+                HudView.DebugHideAll = true;
+                if (_filmCam == null)
+                {
+                    _filmCam = new GameObject("FilmCam").AddComponent<Camera>();
+                    _filmCam.fieldOfView = 42f;
+                    _filmCam.nearClipPlane = 0.05f;
+                    _filmCam.depth = 50f;
+                }
+            }
+            // Câmara lateral fixa em altura, a acompanhar o boneco remoto (vê-se passo, velocidade e orientação).
+            Vector3 body = peer.transform.position;
+            _filmCam.transform.position = new Vector3(body.x, 1.25f, body.z + 3.0f);
+            _filmCam.transform.rotation = Quaternion.LookRotation(new Vector3(body.x, 0.6f, body.z) - _filmCam.transform.position);
+            ScreenCapture.CaptureScreenshot(Path.Combine(dir, "peer_" + _watchFrame.ToString("0000") + ".png"));
+            _watchFrame++;
+            if (_watchFrame >= 400)
+            {
+                Time.captureFramerate = 0;
+                HudView.DebugHideAll = false;
+                _filmCam.enabled = false;
+            }
+        }
+
+        void UpdateLobby(NetGame net)
+        {
+            UpdateWander();
+            UpdateWatchPeer();
+            if (UpdateGICheck()) return;
+            if (Has("-fsAnimLab"))
+            {
+                if (!_labLaunched && NetPlayer.Local != null && _time > 3f)
+                {
+                    _labLaunched = true;
+                    AnimLab.GunOnly = Has("-fsGunLab");
+                    AnimLab.Launch(Arg("-fsAnimLab"));
+                }
+                return;
+            }
+            Schedule("lobby", 3f);
+            if (_time > 4f && UpdateTour()) return;
+            var slot = net.LocalSlot;
+            if (!net.IsLocalHost)
+            {
+                if (slot != null && !slot.Ready && Has("-fsAutoplay")) net.SetReady(true);
+                return;
+            }
+
+            if (!_settingsSent && Has("-fsRounds"))
+            {
+                _settingsSent = true;
+                var settings = net.View.Settings.Copy();
+                settings.RoundLimit = IntArg("-fsRounds", settings.RoundLimit);
+                if (Has("-fsRack")) settings.RackMode = (RackMode)IntArg("-fsRack", 0);
+                if (Has("-fsBalls")) settings.BallCount = IntArg("-fsBalls", 0);
+                // -fsRisk N: balas iniciais do revólver (de 6) para testes de eliminação mais rápidos.
+                if (Has("-fsRisk")) settings.RiskDanger = IntArg("-fsRisk", settings.RiskDanger);
+                if (Has("-fsBotLevel")) settings.BotDifficulty = IntArg("-fsBotLevel", 1);
+                settings.ShopSeconds = Has("-fsMachineShot") ? 14 : 8;
+                net.HostApplySettings(settings);
+            }
+
+            int want = IntArg("-fsStartWhen", 0);
+            if (want <= 0 || net.View.Slots.Count < want) return;
+            _actionTimer += Time.unscaledDeltaTime;
+            if (_actionTimer < 2f) return;
+            _actionTimer = 0f;
+            Log("a começar partida com " + net.View.Slots.Count + " lugares");
+            net.HostStartMatch();
+        }
+
+        void UpdateAutoplay(NetGame net, MatchView view, float dt)
+        {
+            var me = net.LocalPlayer;
+            if (me == null || me.Eliminated) return;
+            UpdateAnytimeSabotage(net, view, me, dt);
+
+            int key = view.Phase == MatchPhase.AwaitShot ? view.ShotSequence * 16 + view.CurrentPlayer :
+                      view.Phase == MatchPhase.AwaitTrigger ? 100000 + view.RoundIndex :
+                      view.Phase == MatchPhase.Shop ? 200000 + view.ShopWindow : -1;
+            if (key < 0) return;
+            if (key != _actedKey)
+            {
+                _actedKey = key;
+                _actionTimer = 0f;
+                _acted = false;
+                _aiming = false;
+                _placed = false;
+            }
+            if (_acted) return;
+            _actionTimer += dt;
+
+            switch (view.Phase)
+            {
+                case MatchPhase.AwaitShot when view.CurrentPlayer == me.Id:
+                    if (_actionTimer < 1.2f) return;
+                    // Espera pela resposta do anfitrião à bola na mão (fluxo real do ShotController).
+                    if (_game.Shot.State == ShotState.PlacePending) return;
+                    var plan = _aiming ? _aimPlan : BotBrain.PlanShot(net.Mirror, view.BallInHand, view.KitchenOnly, _rng, 1f);
+                    if (view.BallInHand && !_placed)
+                    {
+                        _placed = true;
+                        // Sem sítio planeado, pousa num ponto qualquer do pano (encaixa no válido mais próximo).
+                        Vector2 spot = plan.WantsPlacement ? plan.Placement : new Vector2(view.KitchenOnly ? net.Mirror.Table.HeadStringX - 0.1f : -0.3f, 0.1f);
+                        bool sent = _game.Shot.DebugPlace(spot);
+                        Log("[Place] bola na mão " + (sent ? "enviada" : "sem sítio válido") + " para " + spot.ToString("0.00"));
+                        _actionTimer = 0.6f;
+                        return;
+                    }
+                    if (_foulsLeft > 0 && !_aiming)
+                    {
+                        // -fsFoul N: as primeiras N tacadas deste processo são faltas de propósito (para testar a bola na mão).
+                        var lowest = net.Mirror.GetBall(net.Mirror.LowestBallOnTable());
+                        if (lowest != null && net.Mirror.Cue != null)
+                        {
+                            plan.Direction = -(lowest.Position - net.Mirror.Cue.Position).normalized;
+                            plan.Power = 0.15f;
+                            _foulsLeft--;
+                            Log("[Foul] tacada de propósito sem contacto (faltam " + _foulsLeft + ")");
+                        }
+                    }
+                    if (!_aiming)
+                    {
+                        _aiming = true;
+                        _aimPlan = plan;
+                        _game.Shot.DebugAim(plan.Direction, plan.Power);
+                        if (_aimShots < 2) Schedule("aim" + (++_aimShots), 0.4f, true);
+                        return;
+                    }
+                    if (_actionTimer < 2.2f) return;
+                    net.RequestShot(plan.Direction, plan.Power, Vector2.zero);
+                    _acted = true;
+                    _aiming = false;
+                    _placed = false;
+                    break;
+                case MatchPhase.AwaitTrigger when view.Selected == me.Id:
+                    Schedule("trigger", 0.4f, true);
+                    if (_shots.Contains("trigger") && _pendingShot == null) Schedule("trigger_held", 1.6f, true);
+                    if (_actionTimer < 1.6f) return;
+                    net.RequestTrigger();
+                    _acted = true;
+                    break;
+                case MatchPhase.Shop:
+                    if (Has("-fsMachineShot") && Has("-fsShots") && !_shots.Contains("machine") && NetPlayer.Local != null)
+                    {
+                        // Vai à máquina, abre-a (zoom) e fotografa a UI desenhada no ecrã.
+                        if (_actionTimer < 0.3f) return;
+                        var anchor = RoomBuilder.SabotageAnchor;
+                        Vector3 front = anchor.rotation * Vector3.back;
+                        NetPlayer.Local.TeleportTo(anchor.position + front * 1.3f, Quaternion.LookRotation(-front).eulerAngles.y);
+                        _game.Interaction.DebugOpen(_game.SabotageMachine);
+                        Schedule("machine", 1.4f, true);
+                        _actionTimer = -1.2f;
+                        return;
+                    }
+                    if (_actionTimer < 1f) return;
+                    int tier = _rng.NextDouble() < 0.4 ? 1 : 0;
+                    var targets = new List<int>();
+                    foreach (var p in view.Players)
+                        if (view.BlockFor(me.Id, p.Id, tier) == SabotageBlock.None) targets.Add(p.Id);
+                    if (targets.Count > 0 && _rng.NextDouble() < 0.7) net.RequestPurchase(targets[_rng.Next(targets.Count)], tier);
+                    else net.RequestPassShop();
+                    _game.Interaction.Close();
+                    _acted = true;
+                    break;
+            }
+        }
+
+        float _sabTimer;
+        bool _machineOpened;
+        float _qaMatchStartedAt = -1f;
+        bool _qaDropped;
+        bool _qaFunded, _qaBought, _qaBuyHooked;
+
+        void UpdateGoalPurchase(NetGame net)
+        {
+            if (!_qaBuyHooked)
+            {
+                _qaBuyHooked = true;
+                net.PurchaseCompleted += (accepted, reason, cost) => Log("[GoalQA] remote purchase accepted=" + accepted + " cost=" + cost + " reason=" + reason);
+            }
+            if (net.IsLocalHost && !_qaFunded)
+            {
+                _qaFunded = true;
+                foreach (var p in net.ServerDirector.Players)
+                    p.Coins = net.ServerDirector.Sabotage.BaseCost(1);
+            }
+            var me = net.LocalPlayer;
+            if (net.IsLocalHost || _qaBought || me == null) return;
+            foreach (var target in net.View.Players)
+            {
+                int cost = net.View.CostFor(me.Id, target.Id, 1);
+                if (net.View.BlockFor(me.Id, target.Id, 1) != SabotageBlock.None || me.Coins != cost) continue;
+                _qaBought = true;
+                Log("[GoalQA] remote Caos request with exact balance=" + me.Coins + " target=" + target.Id);
+                net.RequestPurchase(target.Id, 1);
+                return;
+            }
+        }
+
+        /// <summary>Máquina sempre aberta: vai lá durante a vez de outro jogador, fotografa o ecrã e sabota.</summary>
+        void UpdateAnytimeSabotage(NetGame net, MatchView view, PlayerView me, float dt)
+        {
+            bool can = view.SabotageAnytime && view.ShopOpen && me.SabotageCooldown <= 0f && me.Coins >= view.Settings.SabotageCost &&
+                       view.Phase == MatchPhase.AwaitShot && view.CurrentPlayer != me.Id;
+            if (!can)
+            {
+                if (_machineOpened) _game.Interaction.Close();
+                _machineOpened = false;
+                _sabTimer = Mathf.Min(_sabTimer, 0f);
+                return;
+            }
+            _sabTimer += dt;
+            if (Has("-fsMachineShot") && Has("-fsShots") && !_shots.Contains("machine") && !_machineOpened && _sabTimer > 0.3f && NetPlayer.Local != null)
+            {
+                var anchor = RoomBuilder.SabotageAnchor;
+                Vector3 front = anchor.rotation * Vector3.back;
+                NetPlayer.Local.TeleportTo(anchor.position + front * 1.3f, Quaternion.LookRotation(-front).eulerAngles.y);
+                _game.Interaction.DebugOpen(_game.SabotageMachine);
+                _machineOpened = true;
+                Schedule("machine", 1.4f, true);
+            }
+            if (_sabTimer < 2.5f) return;
+            int tier = _rng.NextDouble() < 0.4 ? 1 : 0;
+            var targets = new List<int>();
+            foreach (var p in view.Players)
+                if (view.BlockFor(me.Id, p.Id, tier) == SabotageBlock.None) targets.Add(p.Id);
+            if (targets.Count > 0) net.RequestPurchase(targets[_rng.Next(targets.Count)], tier);
+            _game.Interaction.Close();
+            _machineOpened = false;
+            _sabTimer = -(float)(_rng.NextDouble() * 8.0);
+        }
+
+        float _elimSeenAt = -1f;
+        int _foulsLeft = -1;
+        bool _socialHooked;
+        int _pingsSent, _pingsMine, _pingsRefused, _funShots, _funHits;
+        float _pingAt, _pingLogAt, _funAt;
+
+        void HookSocial(NetGame net)
+        {
+            if (_socialHooked) return;
+            _socialHooked = true;
+            net.Ping += (sender, point, normal) => { if (sender == net.LocalClientId) _pingsMine++; };
+            net.PingRefused += remaining => _pingsRefused++;
+            net.FunShot += (shooter, target, origin, hit) =>
+            {
+                _funShots++;
+                if (target >= 0) _funHits++;
+                Log("[Fun] tiro " + shooter + " -> " + target + " (" + _funHits + "/" + _funShots + " acertos)");
+            };
+            if (Has("-fsUiScale") && float.TryParse(Arg("-fsUiScale"), NumberStyles.Float, CultureInfo.InvariantCulture, out float s)) _game.Settings.UiScale = s;
+        }
+
+        /// <summary>-fsPing: tenta um marcador a cada 0,7 s SEM a recarga local; o anfitrião só deve aceitar ~1 por recarga.</summary>
+        void UpdatePingTest(NetGame net)
+        {
+            HookSocial(net);
+            if (!Has("-fsPing")) return;
+            if (_time >= _pingAt)
+            {
+                _pingAt = _time + 0.7f;
+                _pingsSent++;
+                net.DebugPingUnchecked(new Vector3(Mathf.Sin(_time) * 0.8f, TableView.TopY, 0.2f));
+            }
+            if (_time >= _pingLogAt)
+            {
+                _pingLogAt = _time + 10f;
+                Log("[Ping] enviados=" + _pingsSent + " aceites=" + _pingsMine + " recusados=" + _pingsRefused + " recarga=" + NetGame.PingCooldownSeconds.ToString("0.0", CultureInfo.InvariantCulture) + "s");
+            }
+        }
+
+        /// <summary>-fsFun: no fim, o vencedor fecha o placar e dispara contra quem perdeu (modo de brincadeira).</summary>
+        void UpdateFunTest(NetGame net, MatchView view)
+        {
+            HookSocial(net);
+            if (!Has("-fsFun") || _time - _overTime < 3f) return;
+            if (_game.Hud.ResultsOpen && _time - _overTime > 4f && _shots.Add("fun_close")) { _game.Hud.HandleTab(); Schedule("funmode", 2.5f, true); }
+            if (!net.LocalIsFunShooter || _time < _funAt) return;
+            _funAt = _time + 1.3f;
+            var from = _game.Rig.Camera.transform.position;
+            foreach (var p in view.Players)
+            {
+                if (p.Id == view.MatchWinner || _rng.NextDouble() < 0.4) continue;
+                var avatar = AvatarLocator.Find(net, p.Id);
+                if (avatar == null) continue;
+                Vector3 center = avatar.transform.position + Vector3.up * 0.7f;
+                net.RequestFunShot(from, center - from, p.Id, center);
+                if (_funShots == 1) Schedule("fun_ragdoll", 0.5f, true);
+                return;
+            }
+        }
+        int _burst;
+        float _burstAt;
+        bool _acted;
+        bool _aiming;
+        bool _placed;
+
+        void Schedule(string name, float delay, bool force = false)
+        {
+            if (!Has("-fsShots") || _shots.Contains(name) || (_pendingShot != null && !force)) return;
+            _shots.Add(name);
+            _pendingShot = name;
+            _pendingShotAt = _time + delay;
+        }
+
+        void Capture(string name)
+        {
+            string dir = Arg("-fsShots");
+            Directory.CreateDirectory(dir);
+            string path = Path.GetFullPath(Path.Combine(dir, "match" + (_completedMatches+1) + "_" + name + ".png"));
+            ScreenCapture.CaptureScreenshot(path);
+            Log("screenshot " + path);
+        }
+
+        void WriteReport(NetGame net)
+        {
+            if (!Has("-fsReport")) return;
+            var v = net.View;
+            var sb = new StringBuilder();
+            sb.Append("{\"winner\":").Append(v.MatchWinner);
+            sb.Append(",\"rounds\":").Append(v.RoundIndex);
+            sb.Append(",\"shots\":").Append(v.Telemetry.Shots);
+            sb.Append(",\"discharges\":").Append(v.Telemetry.Discharges);
+            sb.Append(",\"sabotages\":").Append(v.Telemetry.Sabotages);
+            sb.Append(",\"ranking\":[").Append(string.Join(",", v.Ranking)).Append(']');
+            sb.Append(",\"players\":[");
+            for (int i = 0; i < v.Players.Count; i++)
+            {
+                var p = v.Players[i];
+                if (i > 0) sb.Append(',');
+                sb.Append("{\"id\":").Append(p.Id).Append(",\"name\":\"").Append(p.Name.Replace("\"", "'"))
+                  .Append("\",\"bot\":").Append(p.IsBot ? "true" : "false")
+                  .Append(",\"wins\":").Append(p.RoundWins).Append(",\"lives\":").Append(p.Lives)
+                  .Append(",\"coins\":").Append(p.Coins).Append(",\"pockets\":").Append(p.LegalPockets)
+                  .Append(",\"eliminated\":").Append(p.Eliminated ? "true" : "false").Append('}');
+            }
+            sb.Append("],\"balls\":[");
+            for (int i = 0; i < v.Balls.Count; i++)
+            {
+                var b = v.Balls[i];
+                if (i > 0) sb.Append(',');
+                sb.Append('[').Append(b.Number).Append(',').Append(b.Position.x.ToString("0.0000", CultureInfo.InvariantCulture)).Append(',')
+                  .Append(b.Position.y.ToString("0.0000", CultureInfo.InvariantCulture)).Append(',').Append(b.Pocketed ? 1 : 0).Append(']');
+            }
+            sb.Append("]}");
+            var path = Arg("-fsReport");
+            if (IntArg("-fsMatches",1)>1) path = Path.ChangeExtension(path, null) + "-" + (_completedMatches+1) + ".json";
+            File.WriteAllText(path, sb.ToString());
+            Log("relatório escrito em " + Arg("-fsReport"));
+        }
+
+        void Quit(string reason)
+        {
+            if (_frameTimes.Count > 0)
+            {
+                _frameTimes.Sort();
+                double total=0; foreach(var ms in _frameTimes) total+=ms;
+                Log($"frames={_frameTimes.Count} mean={total/_frameTimes.Count:F2}ms p95={_frameTimes[(int)(_frameTimes.Count*.95f)]:F2}ms memory={UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong()/1048576}MiB");
+                int spikes = 0; foreach (var ms in _frameTimes) if (ms > 40f) spikes++;
+                Log($"pacing p99={_frameTimes[(int)(_frameTimes.Count*.99f)]:F2}ms p999={_frameTimes[(int)(_frameTimes.Count*.999f)]:F2}ms max={_frameTimes[_frameTimes.Count-1]:F1}ms travamentos>40ms={spikes} gc0={System.GC.CollectionCount(0) - _gcAtStart}");
+                if (_remoteSamples > 0) Log($"remotos: amostras={_remoteSamples} paragens={_remoteStalls} ({100f * _remoteStalls / _remoteSamples:F2}%) saltos={_remoteJumps} teletransportes={_remoteTeleports}");
+            }
+            Log("a sair: " + reason);
+            Application.Quit();
+        }
+
+        System.Collections.IEnumerator RestartSession()
+        {
+            _restarting = true;
+            bool wasHost = _game.Network.IsHost;
+            _game.Leave();
+            while (_game.Network.IsListening || NetGame.Instance != null) yield return null;
+            _game.Hud.DebugShow("main");
+            // Clients finish their result screen four seconds before the host. Do not rejoin the old completed match.
+            yield return new WaitForSecondsRealtime(wasHost ? 1f : 6f);
+            Log("menu entre partidas; avatares restantes=" + NetPlayer.All.Count);
+            _game.Settings.Archetype = _completedMatches % 3;
+            _game.Settings.HatId = (_completedMatches + 2) % CosmeticIds.HatCount;
+            _game.Settings.AccessoryId = (_completedMatches + 1) % CosmeticIds.AccessoryCount;
+            _game.Settings.Graphics.CelShading = _completedMatches % 3;
+            GraphicsQuality.Apply(_game.Rig.Camera);
+            _shots.Clear(); _pendingShot = null; _reported = false; _settingsSent = false;
+            _overTime = -1f; _actedKey = int.MinValue; _actionTimer = 0;
+            _aiming = _placed = false;
+            _restarting = false;
+            StartSession();
+        }
+    }
+}

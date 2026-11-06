@@ -1,0 +1,68 @@
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class RearReachSweepDiagnostic
+    {
+        static float Measure(Archetype shape, Vector2 ball, Vector2 direction, bool extension)
+        {
+            Random.InitState(2026);
+            var settings = new BilliardsPhysicsSettings();
+            var table = new TableGeometry(settings);
+            var stand = ShotMath.StandBehind(ball, direction, table);
+            var holder = new GameObject("ReachSweep");
+            holder.transform.SetPositionAndRotation(new Vector3(stand.x,0,stand.y),Quaternion.Euler(0,ShotMath.WorldYaw(direction),0));
+            var avatar = AvatarVisual.Create(holder.transform,new PlayerProfile("QA",shape,Color.cyan));
+            try
+            {
+                var flat=new Vector3(direction.x,0,direction.y);
+                var tilt=Quaternion.AngleAxis(ShotMath.CueTilt(ball,direction,table,settings.BallRadius),Vector3.Cross(Vector3.up,flat))*flat;
+                var world=TableView.ToWorld(ball,settings.BallRadius);
+                var tip0=world-tilt*(settings.BallRadius+.01f);
+                var bridge=world-flat*.18f; bridge.y=TableView.TopY+.035f;
+                float worst=0f;
+                AvatarVisual.QARearShoulderReach=extension;
+                for(int frame=0;frame<120;frame++)
+                {
+                    float pull=frame<60?0:(frame-60)*.3f/59f;
+                    float visual=avatar.VisualCuePull(tip0,tilt,pull,1f/60f);
+                    float length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-tilt)+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f);
+                    var tip=tip0-tilt*visual;
+                    avatar.SetCue(tip,tilt,length,bridge); avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
+                    if(frame>=60)
+                    {
+                        var channel=avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale);
+                        worst=Mathf.Max(worst,Vector3.ProjectOnPlane(channel-tip,tilt).magnitude);
+                    }
+                }
+                return worst;
+            }
+            finally { Object.DestroyImmediate(holder); }
+        }
+
+        [Test] public void CompareHandChannelError()
+        {
+            var balls=new[]{new Vector2(-.9f,.22f),new Vector2(.35f,0),new Vector2(0,.49f),new Vector2(-1.08f,0)};
+            int count=0,improved=0,worse=0; float oldWorst=0,newWorst=0,maxGain=0;
+            try
+            {
+                foreach(var shape in new[]{Archetype.Square,Archetype.Circle,Archetype.Triangle})
+                foreach(var ball in balls)
+                for(int angle=0;angle<360;angle+=45)
+                {
+                    var dir=new Vector2(Mathf.Cos(angle*Mathf.Deg2Rad),Mathf.Sin(angle*Mathf.Deg2Rad));
+                    float before=Measure(shape,ball,dir,false),after=Measure(shape,ball,dir,true);
+                    count++; if(before-after>.001f)improved++; if(after-before>.001f)worse++;
+                    oldWorst=Mathf.Max(oldWorst,before);newWorst=Mathf.Max(newWorst,after);maxGain=Mathf.Max(maxGain,before-after);
+                }
+                Debug.Log($"[RearReachSweep] count={count} improved={improved} worse={worse} oldWorst={oldWorst:F6} newWorst={newWorst:F6} maxGain={maxGain:F6}");
+                Assert.That(count,Is.EqualTo(96));
+            }
+            finally {AvatarVisual.QARearShoulderReach=true;}
+        }
+    }
+}

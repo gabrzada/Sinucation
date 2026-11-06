@@ -1,0 +1,853 @@
+using System;
+using System.Collections.Generic;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Core.Modifiers;
+using UnityEngine;
+
+namespace FriendSlop.Match
+{
+    /// <summary>GAME-010: estados globais explícitos da partida.</summary>
+    public enum MatchPhase
+    {
+        None,
+        RoundIntro,
+        AwaitShot,
+        Simulating,
+        ShotResult,
+        RoundWon,
+        PunishmentDraw,
+        AwaitTrigger,
+        RiskReveal,
+        Shop,
+        ShopReveal,
+        MatchOver,
+        ShotWindup
+    }
+
+    public enum FeedKind
+    {
+        Info,
+        Good,
+        Bad,
+        Economy,
+        Risk,
+        Sabotage
+    }
+
+    public enum CommandResult
+    {
+        Accepted,
+        Duplicate,
+        Rejected
+    }
+
+    /// <summary>Intenção de tacada enviada pelo cliente (ShotRequest do documento).</summary>
+    public struct ShotRequest
+    {
+        public int PlayerId;
+        /// <summary>Número de sequência idempotente (MULT-013/014): tem de ser igual a MatchDirector.ShotSequence.</summary>
+        public int ShotSequence;
+        public Vector2 Direction;
+        public float Power;
+        public float SpinX;
+        public float SpinY;
+    }
+
+    /// <summary>
+    /// Comandos que um cliente pode enviar à autoridade. Hoje são chamados localmente (hot-seat);
+    /// uma camada de rede só precisa de encaminhar RPCs para esta interface.
+    /// </summary>
+    public interface IMatchCommands
+    {
+        bool RequestPlaceCueBall(int playerId, Vector2 position);
+        CommandResult SubmitShot(ShotRequest request);
+        CommandResult PullTrigger(int playerId, string riskEventId);
+        PurchaseResult SubmitPurchase(PurchaseRequest request);
+        void PassShop(int playerId);
+    }
+
+    /// <summary>
+    /// Authoritative MatchDirector: máquina de estados da partida, dona da física, turnos, RNG,
+    /// economia, punição e sabotagem. Não conhece rendering, input, áudio nem debuffs concretos.
+    /// </summary>
+    public sealed class MatchDirector : IMatchCommands
+    {
+        readonly List<PlayerState> _players = new List<PlayerState>();
+        readonly List<int> _baseOrder = new List<int>();
+        readonly List<int> _roundOrder = new List<int>();
+        readonly List<int> _punishmentCandidates = new List<int>();
+        readonly List<int> _suddenDeathIds = new List<int>();
+        readonly List<PurchaseResult> _shopPurchases = new List<PurchaseResult>();
+        readonly HashSet<int> _shopPassed = new HashSet<int>();
+        readonly Dictionary<int, int> _roundPockets = new Dictionary<int, int>();
+        readonly List<int> _finalRanking = new List<int>();
+        int _starterCursor = -1;
+        bool _rerackUsed;
+        bool _riskResolved;
+        float _matchTime;
+        float _roundStartTime;
+        public const float ShotContactSeconds = 0.16f;
+        ShotParameters _preparedShot;
+
+        public MatchDirector(MatchConfig config, IReadOnlyList<ModifierDefinition> catalog, IReadOnlyList<PlayerProfile> profiles, int seed)
+        {
+            if (config == null) throw new ArgumentNullException(nameof(config));
+            if (profiles == null || profiles.Count < 2) throw new ArgumentException("A partida precisa de pelo menos 2 jogadores.", nameof(profiles));
+            if (profiles.Count > config.PlayerMax) throw new ArgumentException("Jogadores acima de MaxPlayers da configuração.", nameof(profiles));
+
+            Config = config;
+            Seed = seed;
+            MatchId = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + seed.ToString("X8");
+            Log = new MatchEventLog(MatchId, MatchConfig.ConfigVersion);
+            Rng = new RandomService(seed, Log);
+            Telemetry = new MatchTelemetry();
+
+            Sim = new BilliardsSimulation(config.Physics);
+            Sim.Contact += c => Contact?.Invoke(c);
+
+            for (int i = 0; i < profiles.Count; i++)
+                _players.Add(new PlayerState(i, profiles[i].Clone(), Mathf.Max(1, config.StartingLives)));
+
+            Economy = new EconomyService(config.CoinCap);
+            Modifiers = new ModifierService(catalog, config, Rng, Log);
+            Modifiers.Applied += (p, m) => Telemetry.RecordModifier(m.Definition.Id);
+            Sabotage = new SabotageService(config, Economy, Modifiers, Rng, Log, GetPlayer) { AllPlayers = _players };
+            RiskBag = new RiskBag(config.RiskDangerTokens, config.RiskTotalTokens, Rng, config.RiskGrowth);
+        }
+
+        // ---------------------------------------------------------------- events (para apresentação)
+
+        public event Action<MatchPhase> PhaseChanged;
+        public event Action<ShotRequest> ShotAccepted;
+        public event Action<string, FeedKind> Feed;
+        public event Action<SimContact> Contact;
+        public event Action<int> TurnStarted;
+        /// <summary>Antes de montar cada ronda (o anfitrião aplica aqui as regras alteradas a meio da partida).</summary>
+        public event Action RoundStarting;
+        public event Action<ShotRecord, RuleOutcome> ShotResolved;
+        public event Action<PlayerState, RiskOutcome, ModifierInstance> RiskResolved;
+        public event Action<PurchaseResult> SabotageApplied;
+        public event Action<PlayerState> PlayerEliminated;
+        public event Action<int> RoundWon;
+        public event Action MatchEnded;
+
+        // ---------------------------------------------------------------- state
+
+        public MatchConfig Config { get; }
+        public int Seed { get; }
+        public string MatchId { get; }
+        public MatchEventLog Log { get; }
+        public RandomService Rng { get; }
+        public MatchTelemetry Telemetry { get; }
+        public BilliardsSimulation Sim { get; }
+        public EconomyService Economy { get; }
+        public ModifierService Modifiers { get; }
+        public SabotageService Sabotage { get; }
+        public RiskBag RiskBag { get; }
+        /// <summary>Balas no revólver nesta ronda (cresce exponencialmente).</summary>
+        public float SelectedRiskChance => RiskBag.ChanceAfterSurvivals(GetPlayer(SelectedPlayerId)?.RiskSurvivals ?? 0);
+        public int LoadedChambers => Mathf.Clamp(Mathf.CeilToInt(SelectedRiskChance * RiskBag.TotalTokens), 1, RiskBag.TotalTokens);
+
+        public IReadOnlyList<PlayerState> Players => _players;
+        public IReadOnlyList<int> BaseOrder => _baseOrder;
+        public IReadOnlyList<int> RoundOrder => _roundOrder;
+
+        public MatchPhase Phase { get; private set; }
+        public float PhaseDuration { get; private set; }
+        public float PhaseTimeRemaining { get; private set; }
+        public float PhaseElapsed => PhaseDuration - PhaseTimeRemaining;
+
+        public int RoundIndex { get; private set; }
+        public bool IsSuddenDeath { get; private set; }
+        public int TurnIndex { get; private set; }
+        public int CurrentPlayerId { get; private set; } = -1;
+        public bool BallInHand { get; private set; }
+        public bool BallInHandKitchenOnly { get; private set; }
+        public int ShotSequence { get; private set; }
+        public int ShotsThisRack { get; private set; }
+        public ShotRecord LastShot { get; private set; }
+        public RuleOutcome LastOutcome { get; private set; }
+
+        public int RoundWinnerId { get; private set; } = -1;
+        public string PunishmentEventId { get; private set; }
+        public IReadOnlyList<int> PunishmentCandidates => _punishmentCandidates;
+        public int SelectedPlayerId { get; private set; } = -1;
+        public string RiskEventId { get; private set; }
+        public bool HasRiskResult { get; private set; }
+        public RiskOutcome LastRiskOutcome { get; private set; }
+        public ModifierInstance LastRiskModifier { get; private set; }
+        public bool LastRiskEliminated { get; private set; }
+        public bool LastRiskWasAutomatic { get; private set; }
+
+        public int ShopWindowIndex { get; private set; }
+        public IReadOnlyList<PurchaseResult> ShopPurchases => _shopPurchases;
+
+        public int MatchWinnerId { get; private set; } = -1;
+        public IReadOnlyList<int> FinalRanking => _finalRanking;
+
+        public PlayerState GetPlayer(int id) => id >= 0 && id < _players.Count ? _players[id] : null;
+        public PlayerState CurrentPlayer => GetPlayer(CurrentPlayerId);
+
+        public int ActiveCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (var p in _players)
+                    if (p.IsActive) count++;
+                return count;
+            }
+        }
+
+        public bool HasShopPassed(int playerId) => _shopPassed.Contains(playerId);
+
+        // ---------------------------------------------------------------- lifecycle
+
+        public void Start()
+        {
+            if (Phase != MatchPhase.None) return;
+
+            Log.Record("match_start", MatchId,
+                "seed=" + Seed + " players=" + _players.Count + " configVersion=" + MatchConfig.ConfigVersion + " config=" + JsonUtility.ToJson(Config));
+
+            foreach (var p in _players) _baseOrder.Add(p.Id);
+            Rng.Shuffle(_baseOrder);
+            Log.Record("turn_order", Rng.NewEventId("ORDER"), string.Join(",", _baseOrder));
+
+            // Máquina de sabotagem sempre aberta: uma única "janela" que dura a partida inteira.
+            if (SabotageContinuous)
+            {
+                ShopWindowIndex = 1;
+                Sabotage.OpenWindow(ShopWindowIndex);
+            }
+            BeginRound();
+        }
+
+        public void Tick(float deltaTime)
+        {
+            if (Phase == MatchPhase.None || Phase == MatchPhase.MatchOver) return;
+            _matchTime += deltaTime;
+            Sabotage.Now = _matchTime;
+
+            if (Phase == MatchPhase.Simulating)
+            {
+                Sim.Advance(deltaTime);
+                if (!Sim.IsSimulating) ResolveShot();
+                return;
+            }
+
+            if (PhaseDuration <= 0f) return;
+            PhaseTimeRemaining -= deltaTime;
+            if (PhaseTimeRemaining > 0f) return;
+            PhaseTimeRemaining = 0f;
+
+            switch (Phase)
+            {
+                case MatchPhase.RoundIntro: StartTurn(); break;
+                case MatchPhase.AwaitShot: OnTurnTimeout(); break;
+                case MatchPhase.ShotWindup:
+                    Sim.StrikeCue(_preparedShot, LastShot);
+                    SetPhase(MatchPhase.Simulating, 0f);
+                    break;
+                case MatchPhase.ShotResult: AfterShotResult(); break;
+                case MatchPhase.RoundWon: EnterPunishment(); break;
+                case MatchPhase.PunishmentDraw: EnterAwaitTrigger(); break;
+                case MatchPhase.AwaitTrigger: ResolveRisk(true); break;
+                case MatchPhase.RiskReveal: AfterRisk(); break;
+                case MatchPhase.Shop: CloseShop(); break;
+                case MatchPhase.ShopReveal: BeginRound(); break;
+            }
+        }
+
+        void SetPhase(MatchPhase phase, float duration)
+        {
+            Phase = phase;
+            PhaseDuration = duration;
+            PhaseTimeRemaining = duration;
+            Log.Record("phase", null, phase + " round=" + RoundIndex);
+            PhaseChanged?.Invoke(phase);
+        }
+
+        void Say(string text, FeedKind kind) => Feed?.Invoke(text, kind);
+
+        // ---------------------------------------------------------------- rounds & turns
+
+        List<int> Participants()
+        {
+            var ids = new List<int>();
+            if (IsSuddenDeath)
+            {
+                ids.AddRange(_suddenDeathIds);
+                return ids;
+            }
+            foreach (var p in _players)
+                if (p.IsActive) ids.Add(p.Id);
+            return ids;
+        }
+
+        void BeginRound()
+        {
+            RoundStarting?.Invoke();
+            RoundIndex++;
+            _rerackUsed = false;
+            _roundPockets.Clear();
+            _roundStartTime = _matchTime;
+            RoundWinnerId = -1;
+            SelectedPlayerId = -1;
+            HasRiskResult = false;
+
+            var participants = Participants();
+            _roundOrder.Clear();
+            _roundOrder.AddRange(PunishmentRules.RotatedOrder(_baseOrder, participants, ref _starterCursor));
+
+            SetupRack();
+            Log.Record("round_start", "ROUND-" + RoundIndex, "order=" + string.Join(",", _roundOrder) + " balls=" + Sim.FinalBall + (IsSuddenDeath ? " sudden_death" : ""));
+            Say(IsSuddenDeath ? "MORTE SÚBITA! Quem meter a última bola ganha a partida." : "Ronda " + RoundIndex + " — " + Sim.FinalBall + " bolas", FeedKind.Info);
+            SetPhase(MatchPhase.RoundIntro, Config.RoundIntroSeconds);
+        }
+
+        void SetupRack()
+        {
+            int balls = IsSuddenDeath ? Config.SuddenDeathBalls : Config.BallsForActivePlayers(_roundOrder.Count);
+            Sim.SetupRack(balls, Rng);
+            ShotsThisRack = 0;
+            TurnIndex = 0;
+            BallInHand = true;
+            BallInHandKitchenOnly = true;
+        }
+
+        void StartTurn()
+        {
+            TurnIndex = ((TurnIndex % _roundOrder.Count) + _roundOrder.Count) % _roundOrder.Count;
+            CurrentPlayerId = _roundOrder[TurnIndex];
+            if (Sim.Cue.Pocketed)
+                Sim.PlaceCueBall(Sim.FindFreeSpot(Sim.Table.HeadSpot, 0, false));
+
+            SetPhase(MatchPhase.AwaitShot, Config.TurnTimeLimit);
+            TurnStarted?.Invoke(CurrentPlayerId);
+        }
+
+        void AdvanceTurn(bool ballInHand)
+        {
+            var previous = CurrentPlayer;
+            if (previous != null)
+                foreach (var expired in previous.Modifiers.Tick(ModifierDurationType.Turns))
+                    Say(expired.Definition.DisplayName + " expirou para " + previous.Name, FeedKind.Info);
+
+            // Se o jogador anterior saiu da ordem (abandono), TurnIndex já aponta para o seguinte.
+            int index = _roundOrder.IndexOf(CurrentPlayerId);
+            if (index >= 0) TurnIndex = (index + 1) % _roundOrder.Count;
+            BallInHand = ballInHand;
+            BallInHandKitchenOnly = false;
+            StartTurn();
+            // Falta do anterior (branca encaçapada, bola errada primeiro, sem contacto, bola fora): quem joga a seguir
+            // escolhe onde pôr a branca, em qualquer sítio da mesa.
+            if (ballInHand && CurrentPlayer != null)
+                Say(CurrentPlayer.Name + " tem bola na mão: escolhe onde pôr a branca.", FeedKind.Info);
+        }
+
+        void OnTurnTimeout()
+        {
+            Telemetry.Timeouts++;
+            Log.Record("turn_timeout", "SHOT-" + ShotSequence, "player=" + CurrentPlayerId);
+            Say("Tempo esgotado para " + CurrentPlayer.Name + " — passa a vez.", FeedKind.Bad);
+            AdvanceTurn(false);
+        }
+
+        // ---------------------------------------------------------------- commands
+
+        public bool RequestPlaceCueBall(int playerId, Vector2 position) => PlaceCueBall(playerId, position) == null;
+
+        /// <summary>
+        /// Bola na mão: só quem tem a vez, só na fase de tacada (a física está parada) e só num sítio livre da mesa
+        /// (atrás da linha de cabeceira na abertura). Devolve null se aceitou, senão o motivo para mostrar ao jogador.
+        /// </summary>
+        public string PlaceCueBall(int playerId, Vector2 position)
+        {
+            string reason = ValidateCuePlacement(playerId, position);
+            if (reason != null) return reason;
+            Sim.PlaceCueBall(position);
+            Log.Record("cue_placed", "SHOT-" + ShotSequence, "player=" + playerId + " x=" + position.x.ToString("0.000") + " y=" + position.y.ToString("0.000") + " kitchen=" + BallInHandKitchenOnly);
+            return null;
+        }
+
+        public string ValidateCuePlacement(int playerId, Vector2 position)
+        {
+            if (Phase != MatchPhase.AwaitShot || Sim.IsSimulating) return "Já não é altura de pôr a branca.";
+            if (playerId != CurrentPlayerId) return "Não é a tua vez.";
+            if (!BallInHand) return "Não tens bola na mão.";
+            if (!float.IsFinite(position.x) || !float.IsFinite(position.y)) return "Posição inválida.";
+            return Sim.DescribePlacement(position, BallInHandKitchenOnly);
+        }
+
+        public CommandResult SubmitShot(ShotRequest request)
+        {
+            if (request.ShotSequence < ShotSequence) return CommandResult.Duplicate;
+            if (Phase != MatchPhase.AwaitShot || request.PlayerId != CurrentPlayerId || request.ShotSequence != ShotSequence)
+                return CommandResult.Rejected;
+            if (CurrentPlayer == null || !CurrentPlayer.IsActive ||
+                request.Direction.sqrMagnitude < 1e-8f || !float.IsFinite(request.Direction.x) || !float.IsFinite(request.Direction.y) ||
+                !float.IsFinite(request.Power) || !float.IsFinite(request.SpinX) || !float.IsFinite(request.SpinY))
+                return CommandResult.Rejected;
+
+            var shooter = CurrentPlayer;
+            var spin = new Vector2(Mathf.Clamp(request.SpinX, -1f, 1f), Mathf.Clamp(request.SpinY, -1f, 1f));
+            if (spin.sqrMagnitude > 1f) spin.Normalize();
+
+            var baseShot = ShotParameters.FromInput(request.Direction.normalized, Mathf.Clamp01(request.Power), spin.x, spin.y);
+            var effective = ShotModifierPipeline.Apply(baseShot, shooter.Modifiers.Active);
+            if (effective.AngleNoise > 0f)
+            {
+                // Erro aleatório decidido pela autoridade (Taco Ensaboado): Box-Muller sobre o RNG da partida.
+                double u1 = 1.0 - Rng.NextDouble(), u2 = Rng.NextDouble();
+                float degrees = (float)(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2)) * effective.AngleNoise;
+                float radians = degrees * Mathf.Deg2Rad;
+                var d = effective.Direction;
+                effective.Direction = new Vector2(d.x * Mathf.Cos(radians) - d.y * Mathf.Sin(radians), d.x * Mathf.Sin(radians) + d.y * Mathf.Cos(radians));
+            }
+
+            var record = new ShotRecord
+            {
+                ShooterId = shooter.Id,
+                ShotSequence = ShotSequence,
+                LowestBallAtStart = Sim.LowestBallOnTable(),
+                FinalBall = Sim.FinalBall,
+                IsBreak = ShotsThisRack == 0
+            };
+            foreach (var m in shooter.Modifiers.Active) record.ActiveModifierIds.Add(m.Definition.Id);
+
+            Log.Record("shot", "SHOT-" + ShotSequence,
+                "player=" + shooter.Id + " power=" + effective.Power.ToString("0.00") + " impulse=" + effective.ImpulseScale.ToString("0.00") +
+                " curve=" + effective.CurveAcceleration.ToString("0.00") + " mods=" + string.Join("|", record.ActiveModifierIds));
+
+            ShotSequence++;
+            BallInHand = false;
+            shooter.ShotsTaken++;
+            LastShot = record;
+            _preparedShot = effective;
+            SetPhase(MatchPhase.ShotWindup, ShotContactSeconds);
+            ShotAccepted?.Invoke(new ShotRequest { PlayerId = request.PlayerId, ShotSequence = ShotSequence,
+                Direction = request.Direction.normalized, Power = Mathf.Clamp01(request.Power), SpinX = spin.x, SpinY = spin.y });
+            return CommandResult.Accepted;
+        }
+
+        public CommandResult PullTrigger(int playerId, string riskEventId)
+        {
+            if (riskEventId == RiskEventId && _riskResolved) return CommandResult.Duplicate;
+            if (Phase != MatchPhase.AwaitTrigger || riskEventId != RiskEventId || playerId != SelectedPlayerId)
+                return CommandResult.Rejected;
+            // O revólver ainda está a ir para a mão / a subir até à cabeça: igual em todos os ecrãs.
+            if (PhaseElapsed < Config.TriggerArmSeconds) return CommandResult.Rejected;
+            ResolveRisk(false);
+            return CommandResult.Accepted;
+        }
+
+        /// <summary>Sabotagem disponível a qualquer momento da partida (máquina sempre aberta).</summary>
+        public bool SabotageContinuous => Config.SabotageAnytime && Config.EnableSabotage && Config.EnableDebuffs;
+
+        public PurchaseResult SubmitPurchase(PurchaseRequest request)
+        {
+            bool open = Phase == MatchPhase.Shop || (SabotageContinuous && Sabotage.IsOpen && Phase != MatchPhase.None && Phase != MatchPhase.MatchOver);
+            if (!open)
+            {
+                return new PurchaseResult
+                {
+                    RequestId = request.ClientRequestId,
+                    BuyerId = request.BuyerId,
+                    TargetId = request.TargetId,
+                    Status = PurchaseStatus.Rejected,
+                    Reason = "Loja fechada"
+                };
+            }
+
+            Telemetry.SabotageAttempts++;
+            var result = Sabotage.Submit(request, RoundIndex);
+            if (result.Status == PurchaseStatus.Accepted)
+            {
+                Telemetry.SabotageSuccesses++;
+                _shopPurchases.Add(result);
+                // No modo contínuo guarda só as mais recentes (painel "últimas sabotagens").
+                if (SabotageContinuous && _shopPurchases.Count > 6) _shopPurchases.RemoveAt(0);
+                var buyer = GetPlayer(result.BuyerId);
+                var target = GetPlayer(result.TargetId);
+                Say(buyer.Name + " sabotou " + target.Name + ": " + result.Applied.Definition.DisplayName, FeedKind.Sabotage);
+                SabotageApplied?.Invoke(result);
+                if (Phase == MatchPhase.Shop && IsShopComplete()) CloseShop();
+            }
+            return result;
+        }
+
+        public void PassShop(int playerId)
+        {
+            if (Phase != MatchPhase.Shop) return;
+            _shopPassed.Add(playerId);
+            if (IsShopComplete()) CloseShop();
+        }
+
+        /// <summary>MULT-009: passa a vez de forma determinística (ex.: jogador desligado há demasiado tempo).</summary>
+        public void SkipTurn(string reason)
+        {
+            if (Phase != MatchPhase.AwaitShot) return;
+            Log.Record("turn_skipped", "SHOT-" + ShotSequence, "player=" + CurrentPlayerId + " reason=" + reason);
+            Say(CurrentPlayer.Name + " perde a vez (" + reason + ").", FeedKind.Bad);
+            AdvanceTurn(false);
+        }
+
+        /// <summary>
+        /// MULT-011: jogador que excede o período de reconexão é eliminado por abandono.
+        /// A partida continua de forma determinística em qualquer fase.
+        /// </summary>
+        public void Forfeit(int playerId, string reason)
+        {
+            var player = GetPlayer(playerId);
+            if (player == null || player.Eliminated || Phase == MatchPhase.None || Phase == MatchPhase.MatchOver) return;
+
+            Log.Record("forfeit", "FORFEIT-" + playerId, "player=" + playerId + " reason=" + reason + " phase=" + Phase);
+            player.Lives = 0;
+            Eliminate(player);
+
+            int index = _roundOrder.IndexOf(playerId);
+            if (index >= 0)
+            {
+                _roundOrder.RemoveAt(index);
+                if (index < TurnIndex) TurnIndex--;
+            }
+            _suddenDeathIds.Remove(playerId);
+
+            if (ActiveCount <= 1 || (IsSuddenDeath && _suddenDeathIds.Count <= 1))
+            {
+                if (IsSuddenDeath && _suddenDeathIds.Count == 1) MatchWinnerId = _suddenDeathIds[0];
+                FinishMatch();
+                return;
+            }
+
+            switch (Phase)
+            {
+                case MatchPhase.AwaitShot:
+                    if (playerId == CurrentPlayerId)
+                    {
+                        BallInHand = false;
+                        StartTurn();
+                    }
+                    break;
+                case MatchPhase.PunishmentDraw:
+                case MatchPhase.AwaitTrigger:
+                    if (playerId == SelectedPlayerId)
+                    {
+                        _riskResolved = true;
+                        AfterRisk();
+                    }
+                    break;
+                case MatchPhase.Shop:
+                    if (IsShopComplete()) CloseShop();
+                    break;
+            }
+        }
+
+        // ---------------------------------------------------------------- shot resolution
+
+        void ResolveShot()
+        {
+            var record = LastShot;
+            var shooter = GetPlayer(record.ShooterId);
+
+            if (record.Aborted)
+            {
+                Log.Record("physics_recovery", "SHOT-" + record.ShotSequence, "restored pre-shot snapshot");
+                Say("Erro de física — a mesa foi restaurada e a tacada repete.", FeedKind.Bad);
+                SetPhase(MatchPhase.AwaitShot, Config.TurnTimeLimit);
+                TurnStarted?.Invoke(CurrentPlayerId);
+                return;
+            }
+
+            var outcome = PartyNineRules.Evaluate(record);
+            LastOutcome = outcome;
+            ShotsThisRack++;
+
+            shooter.LegalPockets += outcome.LegalPockets;
+            _roundPockets.TryGetValue(shooter.Id, out int pockets);
+            _roundPockets[shooter.Id] = pockets + outcome.LegalPockets;
+            if (outcome.IsFoul) shooter.Fouls++;
+            Telemetry.RecordShot(record, outcome);
+            if (!outcome.IsFoul && outcome.LegalPockets > 0 && Config.PocketReward > 0 && !IsSuddenDeath)
+                Economy.Credit(shooter, Config.PocketReward * outcome.LegalPockets,
+                    outcome.LegalPockets == 1 ? "Bola encaçapada" : outcome.LegalPockets + " bolas encaçapadas");
+
+            foreach (var expired in shooter.Modifiers.Tick(ModifierDurationType.Shots))
+                Say(expired.Definition.DisplayName + " expirou para " + shooter.Name, FeedKind.Info);
+
+            if (outcome.RespotFinalBall) Sim.RespotBall(record.FinalBall);
+            if (Sim.Cue.Pocketed) Sim.PlaceCueBall(Sim.FindFreeSpot(Sim.Table.HeadSpot, 0, false));
+
+            Log.Record("shot_result", "SHOT-" + record.ShotSequence,
+                "first=" + record.FirstContact + " pocketed=" + string.Join(",", record.Pocketed) + " foul=" + outcome.Foul +
+                " keep=" + outcome.KeepTurn + " won=" + outcome.RoundWon);
+
+            if (outcome.IsFoul) Say(shooter.Name + " — " + PartyNineRules.Describe(outcome.Foul), FeedKind.Bad);
+            else if (outcome.RoundWon) Say(shooter.Name + " meteu a bola " + record.FinalBall + "!", FeedKind.Good);
+            else if (outcome.KeepTurn) Say(shooter.Name + " encaçapou e continua.", FeedKind.Good);
+
+            ShotResolved?.Invoke(record, outcome);
+            SetPhase(MatchPhase.ShotResult, Config.ShotResultSeconds);
+        }
+
+        void AfterShotResult()
+        {
+            var outcome = LastOutcome;
+            if (outcome.RoundWon)
+            {
+                EnterRoundWon(LastShot.ShooterId);
+                return;
+            }
+            if (ShotsThisRack >= Config.MaxShotsPerRack)
+            {
+                HandleStalemate();
+                return;
+            }
+            if (outcome.KeepTurn && _roundOrder.Contains(CurrentPlayerId))
+            {
+                BallInHand = false;
+                StartTurn();
+                return;
+            }
+            AdvanceTurn(outcome.BallInHandNext);
+        }
+
+        /// <summary>RULE-006: rerack uma vez; à segunda, vence quem encaçapou mais nesta ronda.</summary>
+        void HandleStalemate()
+        {
+            if (!_rerackUsed)
+            {
+                _rerackUsed = true;
+                Telemetry.Reracks++;
+                Log.Record("stalemate", "ROUND-" + RoundIndex, "rerack");
+                Say("Mesa empatada — nova rack!", FeedKind.Info);
+                SetupRack();
+                StartTurn();
+                return;
+            }
+
+            int best = -1;
+            var tied = new List<int>();
+            foreach (int id in _roundOrder)
+            {
+                _roundPockets.TryGetValue(id, out int pockets);
+                if (pockets > best)
+                {
+                    best = pockets;
+                    tied.Clear();
+                }
+                if (pockets == best) tied.Add(id);
+            }
+            int winner = Rng.ResolveWeightedRoll(Rng.NewEventId("STALEMATE"), "stalemate_resolution", tied, id => 1f, id => id.ToString());
+            Say("Resolução súbita: " + GetPlayer(winner).Name + " leva a ronda por progresso.", FeedKind.Info);
+            EnterRoundWon(winner);
+        }
+
+        // ---------------------------------------------------------------- round won → punishment
+
+        void EnterRoundWon(int winnerId)
+        {
+            RoundWinnerId = winnerId;
+            var winner = GetPlayer(winnerId);
+            winner.RoundWins++;
+            Telemetry.RoundDurations.Add(_matchTime - _roundStartTime);
+            Log.Record("round_won", "ROUND-" + RoundIndex, "winner=" + winnerId);
+
+            foreach (int id in _roundOrder)
+                GetPlayer(id).Modifiers.Tick(ModifierDurationType.Rounds);
+
+            RoundWon?.Invoke(winnerId);
+
+            Economy.Credit(winner, Config.WinnerReward, "Vitória da ronda");
+            foreach (var p in _players)
+                if (p.IsActive && p.Id != winnerId)
+                    Economy.Credit(p, Config.ParticipationReward, "Participação");
+
+            SetPhase(MatchPhase.RoundWon, Config.RoundWonSeconds);
+        }
+
+        void EnterPunishment()
+        {
+            var eligible = PunishmentRules.BuildEligible(_players, RoundWinnerId, ShopWindowIndex + 1, Config.ImmunityProtectsFromPunishment);
+            if (eligible.Count == 0)
+            {
+                AfterRisk();
+                return;
+            }
+
+            _punishmentCandidates.Clear();
+            _punishmentCandidates.AddRange(eligible);
+            PunishmentEventId = Rng.NewEventId("PUN");
+            SelectedPlayerId = Rng.ResolveWeightedRoll(PunishmentEventId, "punishment_selection", eligible, id => 1f, id => id.ToString());
+            GetPlayer(SelectedPlayerId).TimesSelectedForRisk++;
+            HasRiskResult = false;
+
+            SetPhase(MatchPhase.PunishmentDraw, eligible.Count == 1 ? 1.6f : Config.PunishmentPresentationSeconds);
+        }
+
+        void EnterAwaitTrigger()
+        {
+            RiskEventId = Rng.NewEventId("RISK");
+            _riskResolved = false;
+            Say(GetPlayer(SelectedPlayerId).Name + " está na cadeira de risco.", FeedKind.Risk);
+            SetPhase(MatchPhase.AwaitTrigger, Config.TriggerTimeout);
+        }
+
+        void ResolveRisk(bool automatic)
+        {
+            if (_riskResolved) return;
+            _riskResolved = true;
+
+            var player = GetPlayer(SelectedPlayerId);
+            int dryBefore = player.RiskSurvivals;
+            int loaded = LoadedChambers;
+            var outcome = RiskBag.DrawFor(player);
+            Telemetry.RecordRisk(outcome, dryBefore);
+
+            HasRiskResult = true;
+            LastRiskOutcome = outcome;
+            LastRiskModifier = null;
+            LastRiskEliminated = false;
+            LastRiskWasAutomatic = automatic;
+            Log.Record("risk_resolved", RiskEventId, "player=" + player.Id + " outcome=" + outcome + " auto=" + automatic + " loaded=" + loaded + "/" + RiskBag.TotalTokens + " dryBefore=" + dryBefore);
+
+            if (outcome == RiskOutcome.Discharge)
+            {
+                player.Lives = 0;
+                Eliminate(player);
+                LastRiskEliminated = true;
+            }
+            else
+            {
+                LastRiskModifier = Config.EnableDebuffs ? Modifiers.RollAndApply(player, -1, RiskEventId, RoundIndex) : null;
+                Say(LastRiskModifier != null
+                    ? "Clique... " + player.Name + " sobrevive e recebe " + LastRiskModifier.Definition.DisplayName + "."
+                    : "Clique... " + player.Name + " sobrevive sem efeito.", FeedKind.Risk);
+            }
+
+            RiskResolved?.Invoke(player, outcome, LastRiskModifier);
+            SetPhase(MatchPhase.RiskReveal, Config.RiskRevealSeconds);
+        }
+
+        void Eliminate(PlayerState player)
+        {
+            player.Eliminated = true;
+            player.EliminatedRound = RoundIndex;
+            Economy.Wipe(player, "Eliminado");
+            player.Modifiers.Clear();
+            Log.Record("eliminated", RiskEventId, "player=" + player.Id + " round=" + RoundIndex);
+            Say(player.Name + " foi ELIMINADO e passa a espectador.", FeedKind.Bad);
+            PlayerEliminated?.Invoke(player);
+        }
+
+        void AfterRisk()
+        {
+            if (ActiveCount <= 1)
+            {
+                FinishMatch();
+                return;
+            }
+            EnterShop();
+        }
+
+        // ---------------------------------------------------------------- shop
+
+        void EnterShop()
+        {
+            if (!Config.EnableSabotage || !Config.EnableDebuffs || Config.SabotageAnytime)
+            {
+                BeginRound();
+                return;
+            }
+            ShopWindowIndex++;
+            _shopPurchases.Clear();
+            _shopPassed.Clear();
+            Sabotage.OpenWindow(ShopWindowIndex);
+
+            bool anyone = false;
+            foreach (var p in _players)
+                if (p.IsActive && Sabotage.CanBuyAnything(p, _players))
+                {
+                    anyone = true;
+                    break;
+                }
+
+            if (!anyone)
+            {
+                Sabotage.CloseWindow();
+                Say("Ninguém pode sabotar nesta janela.", FeedKind.Economy);
+                BeginRound();
+                return;
+            }
+            SetPhase(MatchPhase.Shop, Config.ShopWindowSeconds);
+        }
+
+        bool IsShopComplete()
+        {
+            foreach (var p in _players)
+            {
+                if (!p.IsActive || _shopPassed.Contains(p.Id)) continue;
+                if (Sabotage.CanBuyAnything(p, _players)) return false;
+            }
+            return true;
+        }
+
+        void CloseShop()
+        {
+            if (Phase != MatchPhase.Shop) return;
+            Sabotage.CloseWindow();
+            if (_shopPurchases.Count > 0) SetPhase(MatchPhase.ShopReveal, Config.ShopRevealSeconds);
+            else BeginRound();
+        }
+
+        // ---------------------------------------------------------------- end
+
+        void FinishMatch()
+        {
+            // Pool rounds award coins, never the match. Only a sole survivor can win.
+            if (ActiveCount > 1) return;
+            if (MatchWinnerId < 0)
+            {
+                var alive = new List<PlayerState>();
+                foreach (var p in _players)
+                    if (p.IsActive) alive.Add(p);
+
+                if (alive.Count == 1)
+                {
+                    MatchWinnerId = alive[0].Id;
+                }
+            }
+
+            _finalRanking.Clear();
+            var ranking = new List<PlayerState>(_players);
+            ranking.Sort((a, b) =>
+            {
+                if (a.Id == MatchWinnerId) return -1;
+                if (b.Id == MatchWinnerId) return 1;
+                if (a.IsActive != b.IsActive) return a.IsActive ? -1 : 1;
+                int c = CompareForVictory(a, b);
+                return c != 0 ? c : b.EliminatedRound.CompareTo(a.EliminatedRound);
+            });
+            foreach (var p in ranking) _finalRanking.Add(p.Id);
+
+            Telemetry.MatchDuration = _matchTime;
+            Log.Record("match_end", MatchId, "winner=" + MatchWinnerId + " ranking=" + string.Join(",", _finalRanking) + " duration=" + _matchTime.ToString("0.0"));
+            Say(MatchWinnerId >= 0 ? GetPlayer(MatchWinnerId).Name + " VENCE A PARTIDA!" : "Partida encerrada sem sobreviventes.", FeedKind.Good);
+            Sabotage.CloseWindow();
+            SetPhase(MatchPhase.MatchOver, 0f);
+            MatchEnded?.Invoke();
+        }
+
+        /// <summary>GAME-006: vitórias de ronda → vidas → desempenho de bilhar. Moedas nunca desempatam.</summary>
+        static int CompareForVictory(PlayerState a, PlayerState b)
+        {
+            int c = b.RoundWins.CompareTo(a.RoundWins);
+            if (c != 0) return c;
+            c = b.Lives.CompareTo(a.Lives);
+            if (c != 0) return c;
+            return b.LegalPockets.CompareTo(a.LegalPockets);
+        }
+    }
+}

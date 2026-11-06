@@ -1,0 +1,37 @@
+using System.Collections.Generic;
+using FriendSlop.Core;
+using FriendSlop.Core.Modifiers;
+using FriendSlop.Match;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class ShotPresentationSourceTests
+    {
+        [Test]
+        public void OnlyAcceptedShotsPublishNormalizedInputAfterWindupBegins()
+        {
+            var config=ScriptableObject.CreateInstance<MatchConfig>();
+            try
+            {
+                var profiles=new List<PlayerProfile> {new PlayerProfile("A",Archetype.Square,Color.white),new PlayerProfile("B",Archetype.Circle,Color.white)};
+                var match=new MatchDirector(config,ModifierCatalog.CreateDefaults(),profiles,31);
+                match.Start();for(int i=0;i<1000 && match.Phase!=MatchPhase.AwaitShot;i++)match.Tick(.1f);
+                Assert.That(match.Phase,Is.EqualTo(MatchPhase.AwaitShot));
+                int count=0;ShotRequest observed=default;MatchPhase phase=default;
+                match.ShotAccepted+=shot=>{count++;observed=shot;phase=match.Phase;};
+                var request=new ShotRequest {PlayerId=match.CurrentPlayerId,ShotSequence=match.ShotSequence,Direction=new Vector2(2f,0f),Power=2f,SpinX=.8f,SpinY=.8f};
+                var invalid=request;invalid.Direction=new Vector2(float.NaN,0f);
+                Assert.That(match.SubmitShot(invalid),Is.EqualTo(CommandResult.Rejected));Assert.That(count,Is.Zero);
+                Assert.That(match.SubmitShot(request),Is.EqualTo(CommandResult.Accepted));
+                Assert.That(count,Is.EqualTo(1));Assert.That(phase,Is.EqualTo(MatchPhase.ShotWindup));
+                Assert.That(observed.ShotSequence,Is.EqualTo(match.ShotSequence));Assert.That(observed.PlayerId,Is.EqualTo(request.PlayerId));
+                Assert.That(observed.Direction,Is.EqualTo(Vector2.right));Assert.That(observed.Power,Is.EqualTo(1f));
+                Assert.That(new Vector2(observed.SpinX,observed.SpinY).magnitude,Is.EqualTo(1f).Within(.00001f));
+                Assert.That(match.SubmitShot(request),Is.EqualTo(CommandResult.Duplicate));Assert.That(count,Is.EqualTo(1));
+            }
+            finally {Object.DestroyImmediate(config);}
+        }
+    }
+}

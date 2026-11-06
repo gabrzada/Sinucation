@@ -1,0 +1,1 @@
+Warning: use of potentially uninitialized variable (FSCelFragmentPBR) at Assets/_Project/Resources/Shaders/CelLighting.hlsl:48

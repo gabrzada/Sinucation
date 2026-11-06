@@ -1,0 +1,23 @@
+using System.IO;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.Rendering;
+namespace FriendSlop.EditorTools {
+public static class HatCloseReview {
+public static void Capture(){
+ EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single); RenderSettings.ambientMode=AmbientMode.Flat; RenderSettings.ambientLight=new Color(.58f,.58f,.62f);var key=new GameObject("key").AddComponent<Light>();key.type=LightType.Directional;key.intensity=2;key.transform.rotation=Quaternion.Euler(40,-35,0);var fill=new GameObject("fill").AddComponent<Light>();fill.type=LightType.Directional;fill.intensity=.7f;fill.transform.rotation=Quaternion.Euler(20,150,0);
+ var cam=new GameObject("camera").AddComponent<Camera>();cam.orthographic=true;cam.orthographicSize=.53f;cam.clearFlags=CameraClearFlags.SolidColor;cam.backgroundColor=new Color(.83f,.83f,.82f);cam.nearClipPlane=.01f;var rt=new RenderTexture(800,800,24);cam.targetTexture=rt;Directory.CreateDirectory("../Logs/StrawGlassesCandidate");
+ foreach(var shape in new[]{Archetype.Triangle,Archetype.Circle,Archetype.Square})foreach(int hat in new[]{6}){
+ var holder=new GameObject("actor");Random.InitState(1024);var avatar=AvatarVisual.Create(holder.transform,new PlayerProfile("QA",shape,ArtPalette.Heads[(int)shape]){HatId=hat,AccessoryId=1});for(int f=0;f<45;f++)avatar.Animate(1f/60,AvatarPose.Idle,0,false);var target=avatar.Head.position+Vector3.up*.26f;
+ foreach(float yaw in new[]{20f,20.5f,21f,21.5f,22f}){cam.transform.position=target+Quaternion.Euler(-8,yaw,0)*new Vector3(0,0,3);cam.transform.LookAt(target);cam.Render();RenderTexture.active=rt;var img=new Texture2D(rt.width,rt.height,TextureFormat.RGB24,false);img.ReadPixels(new Rect(0,0,rt.width,rt.height),0,0);img.Apply();File.WriteAllBytes($"../Logs/StrawGlassesCandidate/{shape}_{hat}_{yaw}.png",img.EncodeToPNG());Object.DestroyImmediate(img);} Object.DestroyImmediate(holder);}
+ RenderTexture.active=null;cam.targetTexture=null;rt.Release();Object.DestroyImmediate(rt);Debug.Log("Hat review captured");
+}}
+}
+
+
+
+
+

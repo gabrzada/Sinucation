@@ -1,0 +1,39 @@
+using System.IO;
+using FriendSlop.Billiards;
+using FriendSlop.Presentation;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+namespace FriendSlop.EditorTools
+{
+    public static class RimModelReview
+    {
+        public static void Capture()
+        {
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);
+            RenderSettings.ambientLight=new Color(.65f,.65f,.65f);
+            var light=new GameObject("Key").AddComponent<Light>(); light.type=LightType.Directional; light.intensity=2f; light.transform.rotation=Quaternion.Euler(45,-35,0);
+            var settings=new BilliardsPhysicsSettings(); var table=new GameObject("Table").AddComponent<TableView>(); table.Initialize(settings);
+            var ball=GameObject.CreatePrimitive(PrimitiveType.Sphere); ball.transform.localScale=Vector3.one*settings.BallRadius*2;
+            ball.GetComponent<Renderer>().sharedMaterial=VisualFactory.Lit(Color.white,.8f);
+            var camera=new GameObject("Camera").AddComponent<Camera>(); camera.orthographic=true; camera.orthographicSize=.19f;
+            camera.clearFlags=CameraClearFlags.SolidColor; camera.backgroundColor=new Color(.3f,.3f,.3f);
+            VisualFactory.ApplyStyle(0);
+            var rt=new RenderTexture(1100,900,24); camera.targetTexture=rt;
+            string output=System.Environment.GetEnvironmentVariable("RIM_REVIEW_OUTPUT")??"../Logs/RimModelCandidate"; Directory.CreateDirectory(output);
+            try
+            {
+                for(int shot=0;shot<6;shot++)
+                {
+                    float hl=table.Geometry.HalfLength,hw=table.Geometry.HalfWidth;
+                    var focus=shot%2==0 ? new Vector3(0,TableView.TopY+.025f,-hw-.02f) : new Vector3(hl,TableView.TopY+.025f,hw);
+                    ball.transform.position=shot%2==0 ? TableView.ToWorld(new Vector2(0,-hw+settings.BallRadius),settings.BallRadius) : TableView.ToWorld(new Vector2(hl-.04f,hw-.04f),settings.BallRadius);
+                    camera.transform.position=focus+(shot%2==0 ? new Vector3(.1f,.25f,.35f) : new Vector3(-.3f,.25f,-.3f)); camera.transform.LookAt(focus);
+                    camera.Render(); camera.Render(); camera.Render(); RenderTexture.active=rt; var image=new Texture2D(rt.width,rt.height,TextureFormat.RGB24,false);
+                    image.ReadPixels(new Rect(0,0,rt.width,rt.height),0,0); image.Apply(); File.WriteAllBytes(Path.Combine(output,shot%2==0?"side.png":"corner.png"),image.EncodeToPNG()); Object.DestroyImmediate(image);
+                }
+            }
+            finally { RenderTexture.active=null; camera.targetTexture=null; rt.Release(); Object.DestroyImmediate(rt); }
+        }
+    }
+}
+

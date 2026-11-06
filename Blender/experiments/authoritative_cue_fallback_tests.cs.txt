@@ -1,0 +1,34 @@
+using FriendSlop.Billiards;
+using FriendSlop.Match;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class CueStrokeFallbackTests
+    {
+        [TestCase(0f)] [TestCase(45f)] [TestCase(90f)] [TestCase(180f)] [TestCase(270f)]
+        public void AcceptedStrokeHasValidGeometryWithoutAnyAvatar(float yaw)
+        {
+            var settings=new BilliardsPhysicsSettings();var table=new TableGeometry(settings);
+            var shot=new ShotRequest {PlayerId=1,ShotSequence=3,Direction=ShotMath.TableDirection(yaw),Power=.8f,SpinX=.3f,SpinY=-.2f};
+            var value=CueStrokeFallback.Create(shot,new Vector2(.2f,-.1f),table,settings.BallRadius,42.25,null);
+            Assert.That(value.IsValid,Is.True);Assert.That(value.HasStartTime,Is.True);Assert.That(value.Shooter,Is.EqualTo(1));
+            Assert.That(value.Sequence,Is.EqualTo(3));Assert.That(value.StartedAt,Is.EqualTo(42.25));
+            Assert.That(value.Direction.magnitude,Is.EqualTo(1f).Within(.0001f));
+            Assert.That(value.Length,Is.EqualTo(1.1f));Assert.That(value.ContactTravel,Is.InRange(.01f,.31f));
+            Assert.That(value.ExtraTravel,Is.Zero);
+        }
+        [Test]
+        public void LargerPowerDoesNotMoveTheBridgeOrChangeShotAxis()
+        {
+            var settings=new BilliardsPhysicsSettings();var table=new TableGeometry(settings);
+            var shot=new ShotRequest {PlayerId=0,ShotSequence=1,Direction=Vector2.right,Power=.1f};
+            var a=CueStrokeFallback.Create(shot,Vector2.zero,table,settings.BallRadius,1,null);shot.Power=.9f;
+            var b=CueStrokeFallback.Create(shot,Vector2.zero,table,settings.BallRadius,1,null);
+            Assert.That(b.Bridge,Is.EqualTo(a.Bridge));Assert.That(b.Direction,Is.EqualTo(a.Direction));
+            Assert.That(b.ContactTravel,Is.GreaterThan(a.ContactTravel));
+        }
+    }
+}

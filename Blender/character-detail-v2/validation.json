@@ -1,0 +1,49 @@
+{
+  "baseline_sha256": "2838155d5dd2622f9f46390d7d72809ec6f3759c5705e4f877d87e5f8948afc1",
+  "output_sha256": "c64eaef1dc6dc9a1ed1cb6c430b551ace336e988b68ecd9bfded32a4154e68ee",
+  "preserved_exactly": [
+    "Pelvis",
+    "Thigh",
+    "Shin",
+    "Forearm",
+    "GloveR",
+    "GloveL",
+    "Collar",
+    "Cap"
+  ],
+  "replaced": [
+    "Boot",
+    "Torso",
+    "UpperArm"
+  ],
+  "vertices": {
+    "Torso": 5828,
+    "Pelvis": 200,
+    "Thigh": 478,
+    "Shin": 1106,
+    "Boot": 2252,
+    "UpperArm": 1836,
+    "Forearm": 734,
+    "GloveR": 2376,
+    "GloveL": 2376,
+    "Collar": 364,
+    "Cap": 3400
+  },
+  "triangles": {
+    "Torso": 11460,
+    "Pelvis": 396,
+    "Thigh": 952,
+    "Shin": 2200,
+    "Boot": 4432,
+    "UpperArm": 3652,
+    "Forearm": 1460,
+    "GloveR": 4296,
+    "GloveL": 4296,
+    "Collar": 572,
+    "Cap": 5920
+  },
+  "left_glove_positions_unchanged": true,
+  "left_glove_signed_volume_before": 0.004079077899603357,
+  "left_glove_signed_volume_after": 0.004079077899603357,
+  "mirror_helper_outward": true
+}

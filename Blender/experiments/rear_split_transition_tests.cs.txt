@@ -1,0 +1,58 @@
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class SplitGripTransitionTests
+    {
+        [TestCase(Archetype.Square)] [TestCase(Archetype.Circle)] [TestCase(Archetype.Triangle)]
+        public void CueGloveTracksAimAndGunKeepsItsOwnGlove(Archetype shape)
+        {
+            Random.InitState(2026);
+            var settings = new BilliardsPhysicsSettings(); var table = new TableGeometry(settings);
+            var ball = new Vector2(-.78f, .1f); var direction = Vector2.right;
+            var stand = ShotMath.StandBehind(ball, direction, table);
+            var holder = new GameObject("SplitGripActor");
+            holder.transform.SetPositionAndRotation(new Vector3(stand.x, 0, stand.y), Quaternion.Euler(0, ShotMath.WorldYaw(direction), 0));
+            var avatar = AvatarVisual.Create(holder.transform, new PlayerProfile("QA", shape, Color.cyan));
+            try
+            {
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                Transform Field(string name) => (Transform)typeof(AvatarVisual).GetField(name, flags).GetValue(avatar);
+                var cueFist = Field("_qaCueFist"); var digits = Field("_qaCueDigits"); var fist = Field("_fistR"); var open = Field("_openR"); var gunMesh = Field("_qaGunMesh");
+                Assert.That(cueFist, Is.Not.Null); Assert.That(digits, Is.Not.Null);
+                var worldBall = TableView.ToWorld(ball, settings.BallRadius); Quaternion lastDigitsRotation = Quaternion.identity;
+                for (int frame = 0; frame < 150; frame++)
+                {
+                    float yaw = frame < 90 ? 0f : (frame - 90) * .25f;
+                    var flat = Quaternion.AngleAxis(yaw, Vector3.up) * Vector3.right;
+                    var tip = worldBall - flat * (settings.BallRadius + .01f);
+                    var bridge = worldBall - flat * .18f; bridge.y = TableView.TopY + .035f;
+                    float pull = avatar.VisualCuePull(tip, flat, frame < 60 ? 0f : .1f, 1f / 60f);
+                    avatar.SetCue(tip - flat * pull, flat, 1.2f, bridge);
+                    avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
+                    if (frame < 90) { lastDigitsRotation = digits.rotation; continue; }
+                    Assert.That(cueFist.gameObject.activeSelf, Is.True);
+                    Assert.That(gunMesh.gameObject.activeSelf, Is.False, "gun glove must not show during cue pose");
+                    Assert.That(Vector3.Angle(digits.forward, flat), Is.LessThan(.1f), "digits must follow cue axis");
+                    var center = digits.TransformPoint(AvatarVisual.FistChannelLocal);
+                    Assert.That(Vector3.ProjectOnPlane(center - (tip - flat * pull), flat).magnitude, Is.LessThan(.01f));
+                    Assert.That(Quaternion.Angle(lastDigitsRotation, digits.rotation), Is.LessThan(2f), "digits must not flip during a gradual aim change");
+                    lastDigitsRotation = digits.rotation;
+                }
+                avatar.Animate(1f / 60f, AvatarPose.Idle, 0f, false);
+                Assert.That(cueFist.gameObject.activeSelf, Is.False, "cue glove should disappear when leaving aim");
+                Assert.That(open.gameObject.activeSelf, Is.True);
+                for (int frame = 0; frame < 90; frame++) { avatar.SetGun(GunStage.Aim, .5f, Vector3.forward); avatar.Animate(1f / 60f, AvatarPose.Idle, 0f, false); }
+                Assert.That(fist.gameObject.activeSelf, Is.True, "gun should retain the original glove");
+                Assert.That(gunMesh.gameObject.activeSelf, Is.True);
+                Assert.That(cueFist.gameObject.activeSelf, Is.False);
+            }
+            finally { Object.DestroyImmediate(holder); }
+        }
+    }
+}

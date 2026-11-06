@@ -1,0 +1,71 @@
+using System.Collections.Generic;
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Match;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+namespace FriendSlop.Tests
+{
+    public class SteepHeadClearanceDiagnostic
+    {
+        [TestCase(0f)] [TestCase(20f)] [TestCase(35f)]
+        public void MeasureStrokeAgainstHead(float roll)
+        {
+            AvatarVisual.QAAimHeadRoll=roll; Random.InitState(2026);
+            var settings=new BilliardsPhysicsSettings(); var table=new TableGeometry(settings);
+            var surface=new CueTableSurface(FsModels.Get("table","TableFrame").Mesh,FsModels.Get("table","Cushions").Mesh);
+            var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+            var cueView=new GameObject("HeadDiagnosticCue").AddComponent<CueView>(); cueView.Initialize(null);
+            var cue=(Transform)typeof(CueView).GetField("_cue",flags).GetValue(cueView); cue.gameObject.SetActive(true);
+            var setLength=typeof(CueView).GetMethod("SetCueLength",flags);
+            var cueColliders=new List<MeshCollider>();
+            MeshCollider Collider(MeshFilter filter) { var c=filter.gameObject.AddComponent<MeshCollider>(); c.sharedMesh=filter.sharedMesh; c.convex=true; return c; }
+            foreach(var filter in cue.GetComponentsInChildren<MeshFilter>()) if(filter.GetComponent<Renderer>().enabled) cueColliders.Add(Collider(filter));
+            var balls=new[] {new Vector2(-table.HalfLength+.035f,-table.HalfWidth+.03f),new Vector2(-table.HalfLength+.035f,0),new Vector2(0,-table.HalfWidth+.03f),new Vector2(table.HalfLength-.035f,table.HalfWidth-.03f),Vector2.zero,new Vector2(.65f,.2f)};
+            int samples=0,cueHits=0,gloveHits=0; float maxCueDepth=0,maxGloveDepth=0,maxHeadStep=0;
+            try
+            {
+                foreach(var shape in new[] {Archetype.Square,Archetype.Circle,Archetype.Triangle}) foreach(var ball in balls) for(int yaw=0;yaw<360;yaw+=45)
+                {
+                    var direction=ShotMath.TableDirection(yaw); var flat=new Vector3(direction.x,0,direction.y);
+                    var stand=ShotMath.StandBehind(ball,direction,table); var holder=new GameObject("HeadDiagnosticAvatar");
+                    holder.transform.SetPositionAndRotation(new Vector3(stand.x,0,stand.y),Quaternion.Euler(0,yaw,0));
+                    var avatar=AvatarVisual.Create(holder.transform,new PlayerProfile("QA",shape,Color.cyan));
+                    try
+                    {
+                        var head=Collider(avatar.Head.Find("Shape/HeadShape").GetComponent<MeshFilter>());
+                        var fist=(Transform)typeof(AvatarVisual).GetField("_qaCueFist",flags).GetValue(avatar);
+                        var palm=Collider(fist.Find("GloveR_CuePalm").GetComponent<MeshFilter>());
+                        var digits=Collider(fist.Find("QACueDigits/GloveR_CueFingers").GetComponent<MeshFilter>());
+                        surface.TryFindTilt(TableView.ToWorld(ball,settings.BallRadius),direction,settings.BallRadius,1.1f,ShotMath.CueTilt(ball,direction,table,settings.BallRadius),out float degrees);
+                        var axis=Quaternion.AngleAxis(degrees,Vector3.Cross(Vector3.up,flat))*flat;
+                        var world=TableView.ToWorld(ball,settings.BallRadius); var tip0=world-axis*(settings.BallRadius+.01f);
+                        var bridge=world-flat*.18f; bridge.y=TableView.TopY+.035f;
+                        float pull=0,length=1.1f,extra=0; Vector3 previous=avatar.Head.position;
+                        for(int frame=0;frame<150;frame++)
+                        {
+                            Vector3 tip;
+                            if(frame<120) { pull=avatar.VisualCuePull(tip0,axis,frame<60?0:(frame-60)*.3f/59f,1f/60f); tip=tip0-axis*pull; length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-axis)+.04f+AvatarVisual.CueGripFromButt,.75f,2.4f); }
+                            else { float elapsed=(frame-120)/60f; float k=Mathf.Clamp01(elapsed/MatchDirector.ShotContactSeconds); tip=tip0-axis*pull+axis*(k*k*(pull+.01f)+Mathf.Clamp01((elapsed-MatchDirector.ShotContactSeconds)/.12f)*extra); }
+                            avatar.SetCue(tip,axis,length,bridge); avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
+                            if(frame==119) { var rear=avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale); var front=avatar.LeftHand.TransformPoint(new Vector3(-.0589854f,-.11728474f,-.00291428f)); extra=Mathf.Clamp(Vector3.Dot(rear-front,-axis)-(pull+.01f)-.25f,0,.15f); }
+                            setLength.Invoke(cueView,new object[]{length}); cue.position=tip; cue.rotation=Quaternion.LookRotation(axis);
+                            if(frame>=60) maxHeadStep=Mathf.Max(maxHeadStep,Vector3.Distance(previous,avatar.Head.position)); previous=avatar.Head.position;
+                            if(frame<60 || frame%5!=0) continue;
+                            bool Penetrates(MeshCollider first,out float depth) => Physics.ComputePenetration(first,first.transform.position,first.transform.rotation,head,head.transform.position,head.transform.rotation,out _,out depth);
+                            bool cueHit=false; float cueDepth=0; foreach(var c in cueColliders) if(Penetrates(c,out float depth)) { cueHit=true;cueDepth=Mathf.Max(cueDepth,depth); }
+                            bool gloveHit=false; float gloveDepth=0;
+                            if(fist.gameObject.activeInHierarchy) foreach(var c in new[] {palm,digits}) if(Penetrates(c,out float depth)) { gloveHit=true;gloveDepth=Mathf.Max(gloveDepth,depth); }
+                            samples++; if(cueHit) cueHits++; if(gloveHit) gloveHits++; maxCueDepth=Mathf.Max(maxCueDepth,cueDepth);maxGloveDepth=Mathf.Max(maxGloveDepth,gloveDepth);
+                        }
+                    }
+                    finally { Object.DestroyImmediate(holder); }
+                }
+                Debug.Log($"HEAD_CLEARANCE roll={roll} samples={samples} cueHits={cueHits} gloveHits={gloveHits} maxCueDepth={maxCueDepth} maxGloveDepth={maxGloveDepth} maxHeadStep={maxHeadStep}");
+            }
+            finally { Object.DestroyImmediate(cueView.gameObject); }
+        }
+    }
+}

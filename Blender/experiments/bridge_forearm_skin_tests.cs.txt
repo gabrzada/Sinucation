@@ -1,0 +1,50 @@
+using System.Reflection;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class BridgeForearmSkinTests
+    {
+        [TestCase(Archetype.Square)] [TestCase(Archetype.Circle)] [TestCase(Archetype.Triangle)]
+        public void WristFlexionPreservesSharedModelsAndReleasesOwnedMesh(Archetype shape)
+        {
+            var firstRoot=new GameObject("BendingAvatar");var secondRoot=new GameObject("OtherAvatar");
+            var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+            Mesh skin=null,original=null;
+            try
+            {
+                var first=AvatarVisual.Create(firstRoot.transform,new PlayerProfile("A",shape,Color.cyan));
+                var second=AvatarVisual.Create(secondRoot.transform,new PlayerProfile("B",shape,Color.cyan));
+                var elbow=(Transform)typeof(AvatarVisual).GetField("_elbowL",flags).GetValue(first);
+                var otherElbow=(Transform)typeof(AvatarVisual).GetField("_elbowL",flags).GetValue(second);
+                var filter=elbow.Find("Forearm").GetComponent<MeshFilter>();var other=otherElbow.Find("Forearm").GetComponent<MeshFilter>();
+                original=filter.sharedMesh;var rest=original.vertices;var normals=original.normals;
+                Assert.That(other.sharedMesh,Is.SameAs(original));
+                first.LeftHand.rotation=Quaternion.AngleAxis(45f,elbow.right)*elbow.rotation;
+                var update=typeof(AvatarVisual).GetMethod("UpdateBridgeForearm",flags);
+                update.Invoke(first,new object[] {true});skin=filter.sharedMesh;
+                Assert.That(skin,Is.Not.SameAs(original));Assert.That(other.sharedMesh,Is.SameAs(original));
+                CollectionAssert.AreEqual(rest,original.vertices);CollectionAssert.AreEqual(normals,original.normals);
+                var bent=skin.vertices;float maxChange=0;
+                for(int i=0;i<bent.Length;i++)
+                {
+                    Assert.That(float.IsFinite(bent[i].x)&&float.IsFinite(bent[i].y)&&float.IsFinite(bent[i].z),Is.True);
+                    if(rest[i].y>=-.04f) Assert.That(Vector3.Distance(rest[i],bent[i]),Is.LessThan(.00001f),"upper sleeve must keep its authored shape");
+                    maxChange=Mathf.Max(maxChange,Vector3.Distance(rest[i],bent[i]));
+                }
+                Assert.That(maxChange,Is.GreaterThan(.005f),"fixture must actually bend the wrist end");
+                update.Invoke(first,new object[] {false});Assert.That(filter.sharedMesh,Is.SameAs(original));
+                update.Invoke(first,new object[] {true});Assert.That(filter.sharedMesh,Is.SameAs(skin),"reuse the owned mesh across aiming changes");
+                typeof(AvatarVisual).GetMethod("OnDestroy",flags).Invoke(first,null);
+                Object.DestroyImmediate(firstRoot);
+                Assert.That(skin==null,Is.True,"the destruction callback must release its deformed mesh; runtime delivery is checked in PlayMode");
+                Assert.That(original!=null,Is.True);Assert.That(other.sharedMesh,Is.SameAs(original));
+                CollectionAssert.AreEqual(rest,other.sharedMesh.vertices);
+            }
+            finally {if(firstRoot!=null)Object.DestroyImmediate(firstRoot);Object.DestroyImmediate(secondRoot);}
+        }
+    }
+}

@@ -1,0 +1,97 @@
+using System.Collections.Generic;
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class CueRailClearanceDiagnostic
+    {
+        [TestCase(.75f)] [TestCase(1.1f)] [TestCase(1.6f)] [TestCase(2.4f)]
+        public void CompareTiltLimitAgainstCurrentCueAndTableMeshes(float cueLength)
+        {
+            var settings = new BilliardsPhysicsSettings();
+            var tableObject = new GameObject("CueRailTable");
+            var table = tableObject.AddComponent<TableView>(); table.Initialize(settings);
+            MeshCollider frameCollider = null;
+            foreach(var filter in table.GetComponentsInChildren<MeshFilter>())
+                if(filter.name == "TableFrame") { frameCollider = filter.gameObject.AddComponent<MeshCollider>(); frameCollider.sharedMesh = filter.sharedMesh; break; }
+            Assert.That(frameCollider, Is.Not.Null);
+            var surfaces = new List<MeshCollider> { frameCollider };
+            foreach(var filter in table.GetComponentsInChildren<MeshFilter>()) if(filter.name == "Cushions") { var c=filter.gameObject.AddComponent<MeshCollider>(); c.sharedMesh=filter.sharedMesh; surfaces.Add(c); }
+            var cueView = new GameObject("CueRailModel").AddComponent<CueView>(); cueView.Initialize(null);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var cue = (Transform)typeof(CueView).GetField("_cue", flags).GetValue(cueView);
+            typeof(CueView).GetMethod("SetCueLength", flags).Invoke(cueView,new object[] { cueLength });
+            cue.gameObject.SetActive(true);
+            var cueColliders = new List<MeshCollider>();
+            foreach(var filter in cue.GetComponentsInChildren<MeshFilter>())
+            {
+                if (!filter.GetComponent<Renderer>().enabled) continue;
+                var collider = filter.gameObject.AddComponent<MeshCollider>(); collider.sharedMesh = filter.sharedMesh; collider.convex = true; cueColliders.Add(collider);
+            }
+            Assert.That(cueColliders.Count, Is.GreaterThanOrEqualTo(3));
+            var surface = new CueTableSurface(FsModels.Get("table","TableFrame").Mesh, FsModels.Get("table","Cushions").Mesh); int surfaceFailures=0, surfaceHits=0, correctedVertexPoses=0; float worstCorrectedDepth=0; float highestSurfaceTilt=0;
+            int measured = 0, baselineHits = 0, uncappedHits = 0, unsolved = 0, overLimit = 0;
+            float maxRequired = 0, maxBaselineDepth = 0, worstVertexDepth = 0; int vertexPoses = 0, vertexCount = 0;
+            try
+            {
+                for(int x=-3;x<=3;x++) for(int z=-3;z<=3;z++) for(int yaw=0;yaw<360;yaw+=30)
+                {
+                    float Fraction(int coordinate) => coordinate == 0 ? 0f : Mathf.Sign(coordinate) * (Mathf.Abs(coordinate)==1 ? .5f : Mathf.Abs(coordinate)==2 ? .92f : .97f);
+                    var ball = new Vector2(Mathf.Clamp(Fraction(x)*table.Geometry.HalfLength,-table.Geometry.HalfLength+settings.BallRadius,table.Geometry.HalfLength-settings.BallRadius),Mathf.Clamp(Fraction(z)*table.Geometry.HalfWidth,-table.Geometry.HalfWidth+settings.BallRadius,table.Geometry.HalfWidth-settings.BallRadius));
+                    float angle = yaw*Mathf.Deg2Rad; var direction = new Vector2(Mathf.Sin(angle),Mathf.Cos(angle)); var flat = new Vector3(direction.x,0,direction.y);
+                    bool Hit(float degrees, out float depth)
+                    {
+                        var axis = Quaternion.AngleAxis(degrees,Vector3.Cross(Vector3.up,flat))*flat;
+                        cue.position = TableView.ToWorld(ball,settings.BallRadius)-axis*(settings.BallRadius+.01f); cue.rotation = Quaternion.LookRotation(axis);
+                        bool any=false; depth=0;
+                        foreach(var collider in cueColliders)
+                            if(Physics.ComputePenetration(collider,collider.transform.position,collider.transform.rotation,frameCollider,frameCollider.transform.position,frameCollider.transform.rotation,out _,out float value)) { any=true; depth=Mathf.Max(depth,value); }
+                        return any;
+                    }
+                    measured++; float baseline = ShotMath.CueTilt(ball,direction,table.Geometry,settings.BallRadius);
+                    float tx = Mathf.Abs(direction.x)>.0001f ? (table.Geometry.HalfLength+Mathf.Sign(direction.x)*ball.x)/Mathf.Abs(direction.x) : float.MaxValue;
+                    float ty = Mathf.Abs(direction.y)>.0001f ? (table.Geometry.HalfWidth+Mathf.Sign(direction.y)*ball.y)/Mathf.Abs(direction.y) : float.MaxValue;
+                    float uncapped = Mathf.Clamp(Mathf.Atan2(.076f-settings.BallRadius,Mathf.Max(.03f,Mathf.Min(tx,ty)))*Mathf.Rad2Deg,1f,60f);
+                    if(Hit(uncapped,out _)) uncappedHits++;
+                    bool surfaceSolved=surface.TryFindTilt(TableView.ToWorld(ball,settings.BallRadius),direction,settings.BallRadius,cueLength,baseline,out float surfaceTilt);
+                                        if(!surfaceSolved) { surfaceFailures++; if(surfaceFailures<=12) Debug.Log($"SURFACE_FAILURE x={x} z={z} yaw={yaw} ball={ball:F5} baseline={baseline:F3}"); }
+                    highestSurfaceTilt=Mathf.Max(highestSurfaceTilt,surfaceTilt); if(Hit(surfaceTilt,out _)) surfaceHits++;
+                    float correctedDepth=0;
+                    foreach(var collider in cueColliders) foreach(var vertex in collider.sharedMesh.vertices)
+                    {
+                        var point=collider.transform.TransformPoint(vertex);
+                        foreach(var target in surfaces) if(target.Raycast(new Ray(point+Vector3.up*.4f,Vector3.down),out var hit,.6f)) correctedDepth=Mathf.Max(correctedDepth,hit.point.y-point.y);
+                    }
+                    if(correctedDepth>.001f) { correctedVertexPoses++; worstCorrectedDepth=Mathf.Max(worstCorrectedDepth,correctedDepth); Debug.Log($"CORRECTED_VERTEX_HIT x={x} z={z} yaw={yaw} angle={surfaceTilt:F3} depth={correctedDepth:F5}"); }
+                    if(!Hit(baseline,out float baseDepth)) continue;
+                    baselineHits++; maxBaselineDepth=Mathf.Max(maxBaselineDepth,baseDepth);
+                    int below = 0; float vertexDepth = 0;
+                    foreach(var collider in cueColliders) foreach(var vertex in collider.sharedMesh.vertices)
+                    {
+                        var point = collider.transform.TransformPoint(vertex);
+                        if(frameCollider.Raycast(new Ray(point+Vector3.up*.4f,Vector3.down),out var hit,.6f) && hit.point.y-point.y>.001f)
+                        { below++; vertexDepth=Mathf.Max(vertexDepth,hit.point.y-point.y); }
+                    }
+                    if(below>0) { vertexPoses++; vertexCount+=below; worstVertexDepth=Mathf.Max(worstVertexDepth,vertexDepth); }
+                    if(baselineHits<12) Debug.Log($"CUE_RAIL_VERTICES x={x} z={z} yaw={yaw} below={below} depth={vertexDepth:F5}");
+                    float required=-1;
+                    for(float trial=Mathf.Ceil(baseline);trial<=60;trial+=1f) if(!Hit(trial,out _)) { required=trial; break; }
+                    if(required<0) unsolved++; else { maxRequired=Mathf.Max(maxRequired,required); if(required>16) overLimit++; }
+                    if(baselineHits<=12) Debug.Log($"CUE_RAIL x={x} z={z} yaw={yaw} base={baseline:F3} depth={baseDepth:F5} formula60={uncapped:F3} firstClear={required:F3}");
+                }
+                Debug.Log($"CUE_RAIL_SUMMARY length={cueLength} measured={measured} cueParts={cueColliders.Count} baselineHits={baselineHits} formula60Hits={uncappedHits} requireOver16={overLimit} unsolvedTo60={unsolved} maxRequired={maxRequired} maxBaselineDepth={maxBaselineDepth} correctedVertexPoses={correctedVertexPoses} worstCorrectedDepth={worstCorrectedDepth} surfaceFailures={surfaceFailures} surfaceHullHits={surfaceHits} highestSurfaceTilt={highestSurfaceTilt} vertexPoses={vertexPoses} vertexCount={vertexCount} worstVertexDepth={worstVertexDepth}");
+            }
+            finally { Object.DestroyImmediate(cueView.gameObject); Object.DestroyImmediate(tableObject); }
+            Assert.That(surfaceFailures, Is.Zero, "candidate must find a cue path in every sampled configuration"); Assert.That(correctedVertexPoses, Is.Zero, "independent table raycasts must find no cue vertices below the surface by more than 1 mm");
+        }
+    }
+}
+
+
+
+
+

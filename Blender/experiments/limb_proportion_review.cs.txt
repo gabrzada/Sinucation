@@ -1,0 +1,37 @@
+using System.IO;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+namespace FriendSlop.EditorTools
+{
+    public static class LimbProportionReview
+    {
+        public static void Capture()
+        {
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);
+            RenderSettings.ambientLight=new Color(.6f,.6f,.6f);
+            var light=new GameObject("Key").AddComponent<Light>(); light.type=LightType.Directional;light.intensity=2f;light.transform.rotation=Quaternion.Euler(45,-35,0);
+            var camera=new GameObject("Camera").AddComponent<Camera>();camera.orthographic=true;camera.orthographicSize=.9f;camera.clearFlags=CameraClearFlags.SolidColor;camera.backgroundColor=new Color(.73f,.73f,.7f);
+            var rt=new RenderTexture(1300,1050,24);camera.targetTexture=rt;
+            var avatars=new AvatarVisual[2];
+            for(int i=0;i<2;i++)
+            {
+                AvatarVisual.QALimbScale=i==0?1f:1.2f;
+                var holder=new GameObject("Proportion"+i);holder.transform.position=new Vector3((i-.5f)*1.1f,0,0);
+                avatars[i]=AvatarVisual.Create(holder.transform,new PlayerProfile("QA",Archetype.Square,new Color(.37f,.84f,.71f)));
+                for(int frame=0;frame<120;frame++) avatars[i].Animate(1f/60f,AvatarPose.Idle,0,false);
+            }
+            VisualFactory.ApplyStyle(0);
+            try
+            {
+                Directory.CreateDirectory("../Logs/LimbProportionReview");
+                camera.transform.position=new Vector3(0,.85f,4);camera.transform.LookAt(new Vector3(0,.85f,0));
+                for(int frame=0;frame<4;frame++) camera.Render();
+                RenderTexture.active=rt;var image=new Texture2D(rt.width,rt.height,TextureFormat.RGB24,false);image.ReadPixels(new Rect(0,0,rt.width,rt.height),0,0);image.Apply();
+                File.WriteAllBytes("../Logs/LimbProportionReview/front.png",image.EncodeToPNG());Object.DestroyImmediate(image);
+            }
+            finally {RenderTexture.active=null;camera.targetTexture=null;rt.Release();Object.DestroyImmediate(rt);}
+        }
+    }
+}

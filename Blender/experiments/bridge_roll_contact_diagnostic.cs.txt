@@ -1,0 +1,113 @@
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class PocketBridgeDiagnostic
+    {
+        [TestCase(false)] [TestCase(true)]
+        public void MeasureBridgeAgainstCurrentTableMesh(bool rail)
+        {
+            AvatarVisual.QAUseRailBridge = rail; float extraTilt = 0f;
+            Random.InitState(2026);
+            var settings = new BilliardsPhysicsSettings();
+            var tableObject = new GameObject("BridgeDiagnosticTable");
+            var table = tableObject.AddComponent<TableView>(); table.Initialize(settings);
+            MeshCollider frameCollider = null;
+            foreach (var filter in tableObject.GetComponentsInChildren<MeshFilter>())
+                if (filter.name == "TableFrame") { frameCollider = filter.gameObject.AddComponent<MeshCollider>(); frameCollider.sharedMesh = filter.sharedMesh; break; }
+            Assert.That(frameCollider, Is.Not.Null, "diagnostic must inspect the current Blender table frame");
+            int measured = 0, collisions = 0, vertexPoses = 0, vertexCount = 0, solvedBySlide = 0; float worstDepth = 0, totalDepth = 0, worstVertexDepth = 0;
+            try
+            {
+                for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) for (int yaw = 0; yaw < 360; yaw += 45)
+                {
+                    var ball = new Vector2(x * table.Geometry.HalfLength * .46f, z * table.Geometry.HalfWidth * .46f);
+                    float radians = yaw * Mathf.Deg2Rad;
+                    var direction = new Vector2(Mathf.Sin(radians), Mathf.Cos(radians));
+                    var flat = new Vector3(direction.x, 0, direction.y);
+                    var stand = ShotMath.StandBehind(ball, direction, table.Geometry);
+                    var holder = new GameObject("BridgeDiagnosticAvatar");
+                    holder.transform.SetPositionAndRotation(new Vector3(stand.x, 0, stand.y), Quaternion.Euler(0, ShotMath.WorldYaw(direction), 0));
+                    var avatar = AvatarVisual.Create(holder.transform, new PlayerProfile("QA", Archetype.Square, Color.cyan));
+                    try
+                    {
+                        float degrees = ShotMath.CueTilt(ball, direction, table.Geometry, settings.BallRadius) + extraTilt;
+                        var axis = Quaternion.AngleAxis(degrees, Vector3.Cross(Vector3.up, flat)) * flat;
+                        var world = TableView.ToWorld(ball, settings.BallRadius);
+                        var tip = world - axis * (settings.BallRadius + .01f);
+                        var bridge = world - flat * .18f; bridge.y = TableView.TopY + .035f;
+                        for (int frame = 0; frame < 120; frame++)
+                        {
+                            float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip, -axis) + .04f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                            avatar.SetCue(tip, axis, length, bridge); avatar.Animate(1f/60f, AvatarPose.Aiming, 10f, false);
+                        }
+                        var root = (Transform)typeof(AvatarVisual).GetField("_bridgeL", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(avatar);
+                        if (!root.gameObject.activeInHierarchy) continue;
+                        var mesh = root.GetComponentInChildren<MeshFilter>();
+                        var hand = mesh.gameObject.AddComponent<MeshCollider>(); hand.sharedMesh = mesh.sharedMesh; hand.convex = true;
+                        measured++;
+                        if (!Physics.ComputePenetration(hand, hand.transform.position, hand.transform.rotation, frameCollider, frameCollider.transform.position, frameCollider.transform.rotation, out var normal, out float depth)) continue;
+                        int below = 0; float vertexDepth = 0;
+                        foreach (var vertex in mesh.sharedMesh.vertices)
+                        {
+                            Vector3 point = mesh.transform.TransformPoint(vertex);
+                            if (frameCollider.Raycast(new Ray(point + Vector3.up * .4f, Vector3.down), out var hit, .6f) && hit.point.y - point.y > .002f)
+                            { below++; vertexDepth = Mathf.Max(vertexDepth, hit.point.y - point.y); }
+                        }
+                        if (below > 0) { vertexPoses++; vertexCount += below; worstVertexDepth = Mathf.Max(worstVertexDepth, vertexDepth); }
+                        if (below > 0)
+                        {
+                            var shoulder = (Transform)typeof(AvatarVisual).GetField("_shoulderL", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(avatar);
+                            var groove = avatar.LeftHand.TransformPoint(new Vector3(-.0589854f, -.11728474f, -.00291428f));
+                            bool found = false;
+                            var worldVertices = System.Array.ConvertAll(mesh.sharedMesh.vertices, vertex => mesh.transform.TransformPoint(vertex));
+                            foreach (int roll in new[] { 0, -15, 15, -30, 30, -45, 45, -60, 60, -75, 75, -90, 90 })
+                            {
+                                var rotation = Quaternion.AngleAxis(roll, axis);
+                                float minY = float.PositiveInfinity;
+                                foreach (var vertex in worldVertices) minY = Mathf.Min(minY, (groove + rotation * (vertex - groove)).y);
+                                for (int step = 0; step <= 10 && !found; step++) foreach (int sign in new[] { 1, -1 })
+                                {
+                                    var offset = axis * (step * .03f * sign);
+                                    var wrist = groove + rotation * (avatar.LeftHand.position - groove) + offset;
+                                    if (Vector3.Distance(wrist, shoulder.position) > .308f || minY + offset.y < TableView.TopY - .002f) continue;
+                                    var position = groove + rotation * (hand.transform.position - groove) + offset;
+                                    if (Physics.ComputePenetration(hand, position, rotation * hand.transform.rotation, frameCollider, frameCollider.transform.position, frameCollider.transform.rotation, out _, out _)) continue;
+                                    int contacts = 0;
+                                    foreach (var vertex in worldVertices)
+                                    {
+                                        var point = groove + rotation * (vertex - groove) + offset;
+                                        bool feltContact = Mathf.Abs(point.x) < table.Geometry.HalfLength && Mathf.Abs(point.z) < table.Geometry.HalfWidth && point.y >= TableView.TopY-.002f && point.y <= TableView.TopY+.008f;
+                                        bool railContact = frameCollider.Raycast(new Ray(point + Vector3.up*.004f, Vector3.down), out var support, .012f) && support.normal.y > .5f;
+                                        if (feltContact || railContact) contacts++;
+                                        if (contacts >= 3) break;
+                                    }
+                                    if (contacts < 3) continue;
+                                    solvedBySlide++; found = true;
+                                    if (solvedBySlide <= 8) Debug.Log($"BRIDGE_SEARCH rail={rail} x={x} z={z} yaw={yaw} roll={roll} slide={step*.03f*sign:F3} minY={minY+offset.y:F3}");
+                                    break;
+                                }
+                                if (found) break;
+                            }
+                        }
+                        if (collisions < 8) Debug.Log($"BRIDGE_VERTICES x={x} z={z} yaw={yaw} below={below} depth={vertexDepth:F5}");
+                        collisions++; totalDepth += depth; worstDepth = Mathf.Max(worstDepth, depth);
+                        if (collisions <= 8) Debug.Log($"BRIDGE_TABLE x={x} z={z} yaw={yaw} tilt={degrees:F3} depth={depth:F5} normal={normal:F3}");
+                    }
+                    finally { Object.DestroyImmediate(holder); }
+                }
+                Debug.Log($"BRIDGE_TABLE_SUMMARY rail={rail} extraTilt={extraTilt} measured={measured} collisions={collisions} worstDepth={worstDepth} totalDepth={totalDepth} vertexPoses={vertexPoses} vertexCount={vertexCount} worstVertexDepth={worstVertexDepth} solvedBySlide={solvedBySlide}");
+            }
+            finally { Object.DestroyImmediate(tableObject); }
+        }
+    }
+}
+
+
+
+

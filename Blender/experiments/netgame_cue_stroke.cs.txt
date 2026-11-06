@@ -1,0 +1,31 @@
+namespace FriendSlop.Net
+{
+    public sealed partial class NetGame
+    {
+        CueStrokePresentation _latestCueStroke;
+
+        public bool TryGetCueStroke(int sequence, int shooter, out CueStrokePresentation stroke)
+        {
+            stroke = _latestCueStroke;
+            return stroke.Valid && stroke.Sequence == sequence && stroke.Shooter == shooter;
+        }
+
+        public bool PublishCueStroke(CueStrokePresentation stroke)
+        {
+            if (!IsServer || _director == null || !stroke.IsValid ||
+                stroke.Sequence != _director.ShotSequence || stroke.Shooter != _director.CurrentPlayerId ||
+                (_latestCueStroke.Valid && stroke.Sequence <= _latestCueStroke.Sequence)) return false;
+            stroke.Valid = true;
+            _latestCueStroke = stroke;
+            EmitEvent(NetEventType.CueStroke, stroke.Write);
+            return true;
+        }
+
+        void ReceiveCueStroke(System.IO.BinaryReader reader)
+        {
+            if (CueStrokePresentation.TryRead(reader, out var stroke) &&
+                (!_latestCueStroke.Valid || stroke.Sequence > _latestCueStroke.Sequence))
+                _latestCueStroke = stroke;
+        }
+    }
+}

@@ -1,0 +1,37 @@
+{
+    "name": "FriendSlop",
+    "rootNamespace": "FriendSlop",
+    "references": [
+        "Unity.InputSystem",
+        "Unity.Netcode.Runtime",
+        "Unity.Networking.Transport",
+        "Unity.Collections",
+        "Unity.Services.Core",
+        "Unity.Services.Authentication",
+        "Unity.Services.Multiplayer",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Intel.XeSS.Runtime",
+        "Gree.UnityWebView"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.modules.nvidia",
+            "expression": "1.0.0",
+            "define": "ENABLE_NVIDIA_MODULE"
+        },
+        {
+            "name": "com.unity.modules.amd",
+            "expression": "1.0.0",
+            "define": "ENABLE_AMD_MODULE"
+        }
+    ],
+    "noEngineReferences": false
+}

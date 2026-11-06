@@ -1,0 +1,10 @@
+{
+  "Shaft": {
+    "vertices": 128,
+    "triangles": 252
+  },
+  "Butt": {
+    "vertices": 352,
+    "triangles": 700
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "GumballBase": {
+    "vertices": 2264,
+    "triangles": 4464
+  },
+  "VendingBody": {
+    "vertices": 3084,
+    "triangles": 6032
+  }
+}

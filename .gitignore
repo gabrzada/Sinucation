@@ -112,3 +112,13 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Local caches and downloaded dependency archives
+__pycache__/
+*.pyc
+/Blender/third-party/*.zip
+/Blender/third-party/xess-2.0.5/build/
+.env
+.env.*
+!.env.example
+/Blender/third-party/unity-webview/*/plugins/Windows/packages/

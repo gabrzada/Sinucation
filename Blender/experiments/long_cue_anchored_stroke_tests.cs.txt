@@ -1,0 +1,100 @@
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Match;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class LongCueAnchoredStrokeTests
+    {
+        [Test]
+        public void MeasurePhysicalSupportThroughStroke()
+        {
+            AvatarVisual.QALimbScale=1.2f; AvatarVisual.QAAimMinSpine=42f;
+            AvatarVisual.QASteepSpineRoll=0f; AvatarVisual.QASteepSpineTwist=68f;
+            AvatarVisual.QAAimHeadRoll=0f; AvatarVisual.QASteepGripAdvance=0f;
+            var settings=new BilliardsPhysicsSettings(); var table=new TableGeometry(settings);
+            var surface=new CueTableSurface(FsModels.Get("table","TableFrame").Mesh,FsModels.Get("table","Cushions").Mesh);
+            var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+            var balls=new[] {new Vector2(-table.HalfLength+.035f,-table.HalfWidth+.03f),new Vector2(-table.HalfLength+.035f,0),new Vector2(0,-table.HalfWidth+.03f),new Vector2(table.HalfLength-.035f,table.HalfWidth-.03f),Vector2.zero,new Vector2(.65f,.2f)};
+            int poses=0,unsupported=0,buried=0; float worstBelow=0f,largestGap=0f;
+            try
+            {
+                foreach(var shape in new[] {Archetype.Square,Archetype.Circle,Archetype.Triangle}) foreach(var ball in new[]{balls[1]}) for(int yaw=270;yaw<=270;yaw+=45)
+                {
+                    var direction=ShotMath.TableDirection(yaw); var flat=new Vector3(direction.x,0,direction.y);
+                    surface.TryFindTilt(TableView.ToWorld(ball,settings.BallRadius),direction,settings.BallRadius,1.1f,ShotMath.CueTilt(ball,direction,table,settings.BallRadius),out float degrees); degrees=1.5f;
+                    ShotMath.QAMinCueStance=Mathf.Lerp(.75f,.65f,Mathf.InverseLerp(15f,50f,degrees));
+                    var stand=ShotMath.StandBehind(ball,direction,table); var holder=new GameObject("SupportDiagnosticAvatar");
+                    holder.transform.SetPositionAndRotation(new Vector3(stand.x,0,stand.y),Quaternion.Euler(0,yaw,0));
+                    var avatar=AvatarVisual.Create(holder.transform,new PlayerProfile("QA",shape,Color.cyan));
+                    try
+                    {
+                        var axis=Quaternion.AngleAxis(degrees,Vector3.Cross(Vector3.up,flat))*flat;
+                        var world=TableView.ToWorld(ball,settings.BallRadius); var tip0=world-axis*(settings.BallRadius+.01f);
+                        avatar.QAUseBridgeAnchor=true;
+                        avatar.QABridgeRotation=Quaternion.AngleAxis(15f,axis)*Quaternion.AngleAxis(0f,Vector3.Cross(Vector3.up,flat))*Quaternion.LookRotation(flat,Vector3.up)*new Quaternion(-.45966515f,.77662259f,-.21941277f,.37070662f);
+                        avatar.QABridgeWrist=tip0-axis*1.88f-avatar.QABridgeRotation*new Vector3(-.0589854f,-.11728474f,-.00291428f);
+                        var bridge=world-flat*.18f; bridge.y=TableView.TopY+.035f;
+                        var root=(Transform)typeof(AvatarVisual).GetField("_bridgeL",flags).GetValue(avatar);
+                        var mesh=root.GetComponentInChildren<MeshFilter>(); var vertices=mesh.sharedMesh.vertices;
+                        float pull=0,length=1.1f,extra=0,poseBelow=0,poseGap=0; int minContacts=int.MaxValue;
+                        var tipCenters=new[] {new Vector2(-.03186f,.05664f),new Vector2(-.06254f,.05428f),new Vector2(-.09204f,.03776f),new Vector2(-.11328f,.01416f)};
+                        Vector3 firstGroove=Vector3.zero;float maxTravel=0,maxGripError=0;int minFingers=4;
+                        for(int frame=0;frame<150;frame++)
+                        {
+                            Vector3 tip;
+                            if(frame<120) { pull=avatar.VisualCuePull(tip0,axis,frame<60?0:(frame-60)*.3f/59f,1f/60f); tip=tip0-axis*pull; length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-axis)+.04f+AvatarVisual.CueGripFromButt,.75f,2.8f); }
+                            else { float elapsed=(frame-120)/60f; float k=Mathf.Clamp01(elapsed/MatchDirector.ShotContactSeconds); tip=tip0-axis*pull+axis*(k*k*(pull+.01f)+Mathf.Clamp01((elapsed-MatchDirector.ShotContactSeconds)/.12f)*extra); }
+                            avatar.SetCue(tip,axis,length,bridge); avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
+                            if(frame==119) { var rear=avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale); var front=avatar.LeftHand.TransformPoint(new Vector3(-.0589854f,-.11728474f,-.00291428f)); extra=Mathf.Clamp(Vector3.Dot(rear-front,-axis)-(pull+.01f)-.25f,0,.15f); }
+                            if(frame<60) continue;
+                            Assert.That(root.gameObject.activeInHierarchy,Is.True,shape+" bridge must remain active");
+                            var groove=avatar.LeftHand.TransformPoint(new Vector3(-.0589854f,-.11728474f,-.00291428f));if(frame==60)firstGroove=groove;
+                            maxTravel=Mathf.Max(maxTravel,Vector3.Distance(groove,firstGroove));
+                            var rearChannel=avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale);
+                            maxGripError=Mathf.Max(maxGripError,Vector3.ProjectOnPlane(rearChannel-tip,axis).magnitude);
+                            int contacts=0; float nearest=float.PositiveInfinity;
+                            var counts=new int[4];
+                            foreach(var vertex in vertices)
+                            {
+                                var point=mesh.transform.TransformPoint(vertex);
+                                bool found=surface.TryHeight(new Vector2(point.x,point.z),out float height);
+                                if(Mathf.Abs(point.x)<table.HalfLength && Mathf.Abs(point.z)<table.HalfWidth) {height=Mathf.Max(height,TableView.TopY);found=true;}
+                                if(!found) continue;
+                                float gap=point.y-height; poseBelow=Mathf.Max(poseBelow,-gap);
+                                var canonical=avatar.LeftHand.InverseTransformPoint(point);
+                                var cueFrame=new Quaternion(-.45966515f,.77662259f,-.21941277f,.37070662f)*(canonical-new Vector3(-.0589854f,-.11728474f,-.00291428f));
+                                if(cueFrame.z<.018f || cueFrame.x>-.008f) continue;
+                                nearest=Mathf.Min(nearest,Mathf.Abs(gap));
+                                if(gap>=-.002f && gap<=.008f)
+                                {
+                                    contacts++;int id=0;float distance=float.PositiveInfinity;
+                                    for(int i=0;i<4;i++){float d=(new Vector2(cueFrame.x,cueFrame.z)-tipCenters[i]).sqrMagnitude;if(d<distance){distance=d;id=i;}}counts[id]++;
+                                }
+                            }
+                            if(!root.gameObject.activeInHierarchy) contacts=0;
+                            minContacts=Mathf.Min(minContacts,contacts); poseGap=Mathf.Max(poseGap,nearest);
+                            int supportedFingers=0;foreach(int count in counts)if(count>=3)supportedFingers++;minFingers=Mathf.Min(minFingers,supportedFingers);
+                        }
+                        poses++; if(minContacts<3) unsupported++; if(poseBelow>.002f) buried++;
+                        worstBelow=Mathf.Max(worstBelow,poseBelow); largestGap=Mathf.Max(largestGap,poseGap);
+                        Debug.Log($"JOINT_SUPPORT shape={shape} ball={ball:F3} yaw={yaw} degrees={degrees:F2} contacts={minContacts} below={poseBelow:F5} gap={poseGap:F5}");
+                        Debug.Log($"ANCHORED_STROKE shape={shape} fingers={minFingers} travel={maxTravel:F6} gripError={maxGripError:F6}");
+                        Assert.That(minFingers,Is.GreaterThanOrEqualTo(2),shape+" needs distributed fingertip support throughout the stroke");
+                        Assert.That(poseBelow,Is.LessThanOrEqualTo(.002f),shape+" glove must stay above table surface");
+                        Assert.That(maxTravel,Is.LessThan(.001f),shape+" bridge must stay planted");
+                        Assert.That(maxGripError,Is.LessThan(.006f),shape+" rear grip must stay on cue axis");
+                    }
+                    finally {Object.DestroyImmediate(holder);}
+                }
+                Debug.Log($"JOINT_SUPPORT_SUMMARY poses={poses} unsupported={unsupported} buried={buried} worstBelow={worstBelow:F5} largestGap={largestGap:F5}");
+            }
+            finally {AvatarVisual.QALimbScale=1f; AvatarVisual.QASteepSpineRoll=-14f;AvatarVisual.QASteepSpineTwist=38f;ShotMath.QAMinCueStance=.75f;}
+        }
+    }
+}
+

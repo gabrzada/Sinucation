@@ -1,0 +1,97 @@
+using System.Collections.Generic;
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class BridgeDistributedSupportSearchDiagnostic
+    {
+        [TestCase(false)] [TestCase(true)]
+        public void SearchContactBeforeArmReach(bool rail)
+        {
+            AvatarVisual.QALimbScale=1.2f; AvatarVisual.QASteepSpineRoll=0f; AvatarVisual.QASteepSpineTwist=68f;
+            var settings=new BilliardsPhysicsSettings(); var table=new TableGeometry(settings);
+            var surface=new CueTableSurface(FsModels.Get("table","TableFrame").Mesh,FsModels.Get("table","Cushions").Mesh);
+            var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+            var balls=new[] {new Vector2(-table.HalfLength+.035f,-table.HalfWidth+.03f),new Vector2(-table.HalfLength+.035f,0),new Vector2(0,-table.HalfWidth+.03f),new Vector2(table.HalfLength-.035f,table.HalfWidth-.03f),Vector2.zero,new Vector2(.65f,.2f)};
+            int solved=0,total=0;
+            foreach(var ball in balls) for(int yaw=0;yaw<360;yaw+=45)
+            {
+                if(!((Mathf.Abs(ball.x+table.HalfLength-.035f)<.001f && Mathf.Abs(ball.y)<.001f && (yaw==0 || yaw==270)) || (Mathf.Abs(ball.x)<.001f && Mathf.Abs(ball.y+table.HalfWidth-.03f)<.001f && yaw==270) || (Mathf.Abs(ball.x+table.HalfLength-.035f)<.001f && Mathf.Abs(ball.y+table.HalfWidth-.03f)<.001f && yaw==135))) continue;
+                var direction=ShotMath.TableDirection(yaw); var flat=new Vector3(direction.x,0,direction.y);
+                var tip0=TableView.ToWorld(ball,settings.BallRadius);
+                surface.TryFindTilt(tip0,direction,settings.BallRadius,1.1f,ShotMath.CueTilt(ball,direction,table,settings.BallRadius),out float degrees);
+                var axis=Quaternion.AngleAxis(degrees,Vector3.Cross(Vector3.up,flat))*flat; tip0-=axis*(settings.BallRadius+.01f);
+                ShotMath.QAMinCueStance=Mathf.Lerp(.75f,.65f,Mathf.InverseLerp(15f,50f,degrees));
+                var stand=ShotMath.StandBehind(ball,direction,table); var holder=new GameObject("BridgeSearchAvatar");
+                holder.transform.SetPositionAndRotation(new Vector3(stand.x,0,stand.y),Quaternion.Euler(0,yaw,0));
+                var avatar=AvatarVisual.Create(holder.transform,new PlayerProfile("QA",Archetype.Square,Color.cyan));
+                try
+                {
+                    var bridge=TableView.ToWorld(ball,settings.BallRadius)-flat*.18f;bridge.y=TableView.TopY+.035f;
+                    float length=1.1f;
+                    for(int frame=0;frame<120;frame++) {length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-axis)+.04f+AvatarVisual.CueGripFromButt,.75f,2.4f);avatar.SetCue(tip0,axis,length,bridge);avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);}
+                    var rear=avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale);
+                    float maxT=Mathf.Min(length,Vector3.Dot(rear-tip0,-axis)-.25f);
+                    var shoulder=(Transform)typeof(AvatarVisual).GetField("_shoulderL",flags).GetValue(avatar);
+                    var root=(Transform)typeof(AvatarVisual).GetField("_bridgeL",flags).GetValue(avatar);
+                    var filter=root.GetComponentInChildren<MeshFilter>(); var mesh=rail ? FsModels.Get("gloves","GloveL_RailBridge").Mesh : filter.sharedMesh;
+                    var vertices=new List<Vector3>();var fingers=new List<bool>(); var fingerIds=new List<int>();
+                    var tipCenters=new[] {new Vector2(-.03186f,.05664f),new Vector2(-.06254f,.05428f),new Vector2(-.09204f,.03776f),new Vector2(-.11328f,.01416f)};
+                    var groove=new Vector3(-.0589854f,-.11728474f,-.00291428f);
+                    var bridgeLocal=new Quaternion(-.45966515f,.77662259f,-.21941277f,.37070662f);
+                    foreach(var v in mesh.vertices) {var local=avatar.LeftHand.InverseTransformPoint(filter.transform.TransformPoint(v));vertices.Add(local);var f=bridgeLocal*(local-groove);fingers.Add(f.z>=.018f && f.x<=-.008f);int id=0;float nearest=float.PositiveInfinity;for(int k=0;k<4;k++){float d=(new Vector2(f.x,f.z)-tipCenters[k]).sqrMagnitude;if(d<nearest){nearest=d;id=k;}}fingerIds.Add(id);}
+                    bool Supported(Vector3 p,out float gap)
+                    {
+                        bool found=surface.TryHeight(new Vector2(p.x,p.z),out float height);
+                        if(Mathf.Abs(p.x)<table.HalfLength && Mathf.Abs(p.z)<table.HalfWidth) {height=Mathf.Max(height,TableView.TopY);found=true;}
+                        gap=p.y-height;return found;
+                    }
+                    bool Clear(Vector3 wrist,Quaternion rotation,int stride,out int contacts)
+                    {
+                        contacts=0;var contactCounts=new int[4];
+                        for(int i=0;i<vertices.Count;i+=stride)
+                        {
+                            var p=wrist+rotation*vertices[i]; bool supported=Supported(p,out float gap);
+                            if(supported && gap<-.002f) return false;
+                            float along=Vector3.Dot(tip0-p,axis);
+                            if(along>=0f && along<=length)
+                            {
+                                float shaft=Mathf.Max(.2f,length-.3f);
+                                float radius=along<shaft ? Mathf.Lerp(.00372f,.006f,along/shaft) : .011f;
+                                if(Mathf.Abs(along-shaft)<.012f) radius=.012f;
+                                if(Vector3.ProjectOnPlane(p-tip0,axis).sqrMagnitude<(radius+.0005f)*(radius+.0005f)) return false;
+                            }
+                            if(supported && fingers[i] && gap<=.008f) {contacts++;contactCounts[fingerIds[i]]++;}
+                        }
+                        int supportedFingers=0;foreach(int n in contactCounts)if(n>=3)supportedFingers++;
+                        return stride>1 || supportedFingers>=2;
+                    }
+                    float best=float.PositiveInfinity,bestPitch=0,bestRoll=0,bestT=0; int tested=0;
+                    foreach(float pitch in new[] {0f,Mathf.Max(0,degrees-12f),degrees,degrees+6f}) foreach(float roll in new[] {0f,-15f,15f,-30f,30f,-45f,45f,-60f,60f,-75f,75f,-90f,90f})
+                    {
+                        var rotation=Quaternion.AngleAxis(roll,axis)*Quaternion.AngleAxis(pitch,Vector3.Cross(Vector3.up,flat))*Quaternion.LookRotation(flat,Vector3.up)*bridgeLocal;
+                        for(int step=1;step<=Mathf.CeilToInt(maxT/.01f);step++)
+                        {
+                            float t=step*.01f; if(t>maxT) continue; var wrist=tip0-axis*t-rotation*groove;
+                            if(Vector3.Distance(wrist,shoulder.position)>.398f) continue;
+                            tested++; if(!Clear(wrist,rotation,9,out _)) continue;
+                            if(!Clear(wrist,rotation,1,out int contacts) || contacts<3) continue;
+                            float score=Mathf.Abs(t-.18f)+Mathf.Abs(pitch)*.001f+Mathf.Abs(roll)*.002f;
+                            if(score<best) {best=score;bestPitch=pitch;bestRoll=roll;bestT=t;}
+                        }
+                    }
+                    bool found=!float.IsPositiveInfinity(best);if(found) solved++;total++;
+                    Debug.Log($"BRIDGE_SUPPORT_SEARCH rail={rail} ball={ball:F3} yaw={yaw} degrees={degrees:F2} found={found} t={bestT:F3} pitch={bestPitch:F2} roll={bestRoll:F2} tested={tested}");
+                }
+                finally {Object.DestroyImmediate(holder);}
+            }
+            Debug.Log($"BRIDGE_SUPPORT_SEARCH_SUMMARY rail={rail} total={total} solved={solved}");
+            AvatarVisual.QALimbScale=1f;AvatarVisual.QASteepSpineRoll=-14f;AvatarVisual.QASteepSpineTwist=38f;ShotMath.QAMinCueStance=.75f;
+        }
+    }
+}

@@ -1,0 +1,14 @@
+{
+  "PaperBall": {
+    "vertices": 162,
+    "triangles": 320
+  },
+  "Can": {
+    "vertices": 1852,
+    "triangles": 3680
+  },
+  "Duck": {
+    "vertices": 2116,
+    "triangles": 4192
+  }
+}

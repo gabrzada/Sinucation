@@ -1,0 +1,11 @@
+{
+  "name": "Gree.UnityWebView",
+  "references": [
+    "Unity.InputSystem",
+    "Unity.ugui"
+  ],
+  "includePlatforms": [
+    "Editor",
+    "WindowsStandalone64"
+  ]
+}

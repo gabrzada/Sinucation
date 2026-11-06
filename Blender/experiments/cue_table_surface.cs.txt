@@ -1,0 +1,83 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace FriendSlop.Presentation
+{
+    // Visual surface queries only. No physics colliders or simulation settings are changed.
+    public sealed class CueTableSurface
+    {
+        const float Cell = .06f;
+        readonly Dictionary<(int,int), List<Triangle>> _bins = new Dictionary<(int,int), List<Triangle>>();
+        struct Triangle { public Vector3 A,B,C; public float Denominator; }
+
+        public CueTableSurface(params Mesh[] meshes)
+        {
+            foreach(var mesh in meshes)
+            {
+                if(mesh == null) continue;
+                var vertices = mesh.vertices; var indices = mesh.triangles;
+                for(int i=0;i<indices.Length;i+=3)
+                {
+                    var a=vertices[indices[i]]; var b=vertices[indices[i+1]]; var c=vertices[indices[i+2]];
+                    float denominator=(b.z-c.z)*(a.x-c.x)+(c.x-b.x)*(a.z-c.z);
+                    if(Mathf.Abs(denominator)<1e-9f) continue;
+                    var triangle=new Triangle { A=a,B=b,C=c,Denominator=denominator };
+                    int minX=Mathf.FloorToInt(Mathf.Min(a.x,b.x,c.x)/Cell), maxX=Mathf.FloorToInt(Mathf.Max(a.x,b.x,c.x)/Cell);
+                    int minZ=Mathf.FloorToInt(Mathf.Min(a.z,b.z,c.z)/Cell), maxZ=Mathf.FloorToInt(Mathf.Max(a.z,b.z,c.z)/Cell);
+                    for(int x=minX;x<=maxX;x++) for(int z=minZ;z<=maxZ;z++)
+                    {
+                        if(!_bins.TryGetValue((x,z),out var list)) _bins[(x,z)]=list=new List<Triangle>();
+                        list.Add(triangle);
+                    }
+                }
+            }
+        }
+
+        public bool TryHeight(Vector2 point,out float height)
+        {
+            height=float.NegativeInfinity;
+            if(!_bins.TryGetValue((Mathf.FloorToInt(point.x/Cell),Mathf.FloorToInt(point.y/Cell)),out var list)) return false;
+            bool found=false;
+            foreach(var triangle in list)
+            {
+                var a=triangle.A; var b=triangle.B; var c=triangle.C;
+                float u=((b.z-c.z)*(point.x-c.x)+(c.x-b.x)*(point.y-c.z))/triangle.Denominator;
+                float v=((c.z-a.z)*(point.x-c.x)+(a.x-c.x)*(point.y-c.z))/triangle.Denominator;
+                if(u<-.00001f || v<-.00001f || u+v>1.00001f) continue;
+                height=Mathf.Max(height,u*a.y+v*b.y+(1-u-v)*c.y); found=true;
+            }
+            return found;
+        }
+
+        public bool Clears(Vector3 ball,Vector2 direction,float ballRadius,float length,float degrees)
+        {
+            var flat=new Vector3(direction.x,0,direction.y).normalized;
+            var axis=Quaternion.AngleAxis(degrees,Vector3.Cross(Vector3.up,flat))*flat;
+            var right=Vector3.Cross(Vector3.up,flat);
+            float shaft=Mathf.Max(.2f,length-.3f);
+            int steps=Mathf.CeilToInt(length/.01f);
+            for(int step=0;step<=steps;step++)
+            {
+                float distance=step*length/steps;
+                float radius=distance<shaft ? Mathf.Lerp(.00372f,.006f,distance/shaft) : .011f;
+                if(Mathf.Abs(distance-shaft)<.012f) radius=.012f;
+                var point=ball-axis*(ballRadius+.01f+distance);
+                for(int sample=0;sample<5;sample++)
+                {
+                    var offset=sample==1 ? right*radius : sample==2 ? -right*radius : sample==3 ? flat*radius : sample==4 ? -flat*radius : Vector3.zero;
+                    if(TryHeight(new Vector2(point.x+offset.x,point.z+offset.z),out float surface) && point.y-radius<surface+.002f) return false;
+                }
+            }
+            return true;
+        }
+
+        public bool TryFindTilt(Vector3 ball,Vector2 direction,float ballRadius,float length,float baseline,out float degrees)
+        {
+            degrees=baseline;
+            if(Clears(ball,direction,ballRadius,length,degrees)) return true;
+            for(degrees=Mathf.Ceil(baseline*2f)/2f;degrees<=75f;degrees+=.5f)
+                if(Clears(ball,direction,ballRadius,length,degrees)) return true;
+            degrees=75f; return false;
+        }
+    }
+}

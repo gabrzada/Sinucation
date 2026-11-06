@@ -1,0 +1,34 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3a6b12c6c76a30e41abf113cb004c045, type: 3}
+  m_Name: slippery_cue
+  m_EditorClassIdentifier: FriendSlop::FriendSlop.Core.Modifiers.ModifierDefinition
+  Id: slippery_cue
+  DisplayName: Taco Ensaboado
+  Description: "O taco escorrega: as pr\xF3ximas 3 tacadas saem com um pequeno desvio aleat\xF3rio."
+  ShortLabel: ENSABOADO
+  Category: 0
+  DurationType: 0
+  DurationValue: 3
+  ProbabilityWeight: 35
+  RarityTag: Comum
+  Tier: 0
+  StackPolicy: 4
+  MaxIntensity: 2
+  ConflictGroup: 
+  Priority: 26
+  CountsTowardGameplayLimit: 1
+  Tint: {r: 0.55, g: 0.95, b: 0.95, a: 1}
+  Effects:
+  - Kind: 5
+    Value: 2.2
+    Duration: 0

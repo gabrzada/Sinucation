@@ -1,0 +1,26 @@
+{
+  "Pendant": {
+    "vertices": 2912,
+    "triangles": 5780,
+    "signed_volume": 0.04599067243836773,
+    "height": 0.5955000184476376
+  },
+  "Barrel": {
+    "vertices": 3512,
+    "triangles": 6972,
+    "signed_volume": 0.4178441850635974,
+    "height": 0.9859722331166267
+  },
+  "Crate": {
+    "vertices": 3560,
+    "triangles": 6948,
+    "signed_volume": 0.7147036017240872,
+    "height": 0.9975000023841858
+  },
+  "Stool": {
+    "vertices": 3274,
+    "triangles": 6476,
+    "signed_volume": 0.05485140352433682,
+    "height": 1.0
+  }
+}

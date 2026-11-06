@@ -1,0 +1,56 @@
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class ShoulderOverlapDiagnostic
+    {
+        [Test]
+        public void SampleShoulderAndTorso()
+        {
+            Random.InitState(2026);
+            var settings = new BilliardsPhysicsSettings(); var table = new TableGeometry(settings);
+            int separated = 0, samples = 0; float minPenetration = float.MaxValue;
+            for (int x = -1; x <= 1; x++) for (int z = -1; z <= 1; z++) for (int degrees = 0; degrees < 360; degrees += 45)
+            {
+                var ball = new Vector2(x * table.HalfLength * .7f, z * table.HalfWidth * .7f);
+                float a = degrees * Mathf.Deg2Rad; var direction = new Vector2(Mathf.Sin(a), Mathf.Cos(a));
+                var flat = new Vector3(direction.x, 0, direction.y); var stand = ShotMath.StandBehind(ball, direction, table);
+                var holder = new GameObject("ShoulderDiagnosticActor");
+                holder.transform.SetPositionAndRotation(new Vector3(stand.x, 0, stand.y), Quaternion.Euler(0, ShotMath.WorldYaw(direction), 0));
+                var avatar = AvatarVisual.Create(holder.transform, new PlayerProfile("QA", Archetype.Square, Color.cyan));
+                try
+                {
+                    var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                    var spine = (Transform)typeof(AvatarVisual).GetField("_spine", flags).GetValue(avatar);
+                    var shoulder = (Transform)typeof(AvatarVisual).GetField("_shoulderR", flags).GetValue(avatar);
+                    var torsoMesh = spine.Find("Torso").GetComponent<MeshFilter>();
+                    var armMesh = shoulder.Find("UpperArm").GetComponent<MeshFilter>();
+                    var torso = torsoMesh.gameObject.AddComponent<MeshCollider>(); torso.sharedMesh = torsoMesh.sharedMesh; torso.convex = true;
+                    var arm = armMesh.gameObject.AddComponent<MeshCollider>(); arm.sharedMesh = armMesh.sharedMesh; arm.convex = true;
+                    var tilt = Quaternion.AngleAxis(ShotMath.CueTilt(ball, direction, table, settings.BallRadius), Vector3.Cross(Vector3.up, flat)) * flat;
+                    var world = TableView.ToWorld(ball, settings.BallRadius); var tip0 = world - tilt * (settings.BallRadius + .01f);
+                    var bridge = world - flat * .18f; bridge.y = TableView.TopY + .035f;
+                    for (int frame = 0; frame < 120; frame++)
+                    {
+                        float pull = frame < 60 ? 0f : (frame - 60) * .3f / 59f;
+                        float visual = avatar.VisualCuePull(tip0, tilt, pull, 1f / 60f);
+                        float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                        avatar.SetCue(tip0 - tilt * visual, tilt, length, bridge); avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
+                        if (frame != 60 && frame != 90 && frame != 119) continue;
+                        bool touching = Physics.ComputePenetration(torso, torso.transform.position, torso.transform.rotation,
+                            arm, arm.transform.position, arm.transform.rotation, out _, out float depth);
+                        samples++; if (!touching) separated++; else minPenetration = Mathf.Min(minPenetration, depth);
+                        if (!touching) Debug.Log($"SHOULDER_GAP x={x} z={z} yaw={degrees} frame={frame}");
+                    }
+                }
+                finally { Object.DestroyImmediate(holder); }
+            }
+            Debug.Log($"SHOULDER_SUMMARY samples={samples} separated={separated} minPenetration={minPenetration}");
+        }
+    }
+}

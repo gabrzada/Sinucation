@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Caçapa Russa · playlist</title>
+<style>html,body{margin:0;background:#101923;width:100%;height:100%;overflow:hidden}#probe{width:200px;height:200px}</style></head>
+<body><div id="probe"></div><script>
+// Só no anfitrião e só quando o feed público não chega: um player oficial (IFrame API) que nunca toca — carrega a
+// playlist sem som e lê getPlaylist() para saber os vídeos. A música em si toca na página oficial (watch.js).
+let probe, probeReady = false, job = null;
+function post(o) { const m = JSON.stringify(o); if (window.Unity) Unity.call(m); else if (window.chrome && chrome.webview) chrome.webview.postMessage(m); }
+function finishJob(ids, code) {
+  if (!job) return;
+  const j = job; job = null;
+  post({ type: 'expanded', list: j.list, ids: (ids || []).slice(0, j.max), code: code || 0 });
+}
+function onYouTubeIframeAPIReady() {
+  probe = new YT.Player('probe', { width: 200, height: 200, playerVars: { origin: location.origin },
+    events: {
+      onReady: () => { probeReady = true; post({ type: 'probeReady' }); },
+      onError: e => { if (job) job.error = e.data; }
+    } });
+}
+// Primeiro só "cue"; se a lista não aparecer em 3 s, carrega mesmo (mudo) e pára logo a seguir.
+window.fsExpand = (list, max) => {
+  if (!probeReady) { post({ type: 'expanded', list, ids: [], code: -1 }); return; }
+  job = { list, max, started: performance.now(), loaded: false };
+  probe.mute();
+  probe.cuePlaylist({ listType: 'playlist', list, index: 0 });
+  const poll = () => {
+    if (!job || job.list !== list) return;
+    const ids = (probe.getPlaylist && probe.getPlaylist()) || [];
+    const valid = ids.filter(id => /^[A-Za-z0-9_-]{11}$/.test(id));
+    const waited = performance.now() - job.started;
+    if (valid.length > 0) { probe.stopVideo(); finishJob(valid); return; }
+    if (job.error || waited > 10000) { probe.stopVideo(); finishJob([], job.error || -2); return; }
+    if (!job.loaded && waited > 3000) { job.loaded = true; probe.loadPlaylist({ listType: 'playlist', list, index: 0 }); }
+    setTimeout(poll, 400);
+  };
+  setTimeout(poll, 600);
+};
+</script><script src="https://www.youtube.com/iframe_api"></script></body></html>

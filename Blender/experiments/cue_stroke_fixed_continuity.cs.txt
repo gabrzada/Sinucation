@@ -1,0 +1,17 @@
+using FriendSlop.Net;
+using UnityEngine;
+namespace FriendSlop.Presentation
+{
+    public static class CueStrokeContinuity
+    {
+        public static float StrokeLength(bool preserve,float current,float received) => preserve ? current : received;
+        // Only retain progress for the same stroke on substantially the same axis.
+        public static float PreviousProgress(bool following, int previousShooter, Vector3 previousTip, Vector3 previousDirection, CueStrokePresentation received)
+        {
+            if(!following || previousShooter!=received.Shooter || Vector3.Dot(previousDirection,received.Direction)<.98f) return 0f;
+            var relative=previousTip-received.Tip;
+            if(Vector3.ProjectOnPlane(relative,received.Direction).magnitude>.025f) return 0f;
+            return Mathf.Clamp(Vector3.Dot(relative,received.Direction),0f,.5f);
+        }
+    }
+}

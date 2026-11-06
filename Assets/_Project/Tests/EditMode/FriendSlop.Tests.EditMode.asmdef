@@ -1,0 +1,27 @@
+{
+    "name": "FriendSlop.Tests.EditMode",
+    "rootNamespace": "FriendSlop.Tests",
+    "references": [
+        "FriendSlop",
+        "Unity.Netcode.Runtime",
+        "Intel.XeSS.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -1,0 +1,40 @@
+﻿Créditos de áudio (todos CC0 / domínio público)
+
+Efeitos sonoros — Kenney (www.kenney.nl), CC0:
+  Impact Sounds, Casino Audio, Interface Sounds, Sci-fi Sounds, RPG Audio, Music Jingles.
+
+Música — OpenGameArt.org, CC0:
+  lofi_jam.ogg        "Funky Hip Hop Lofi Jam" — omfgdude
+  funked_up.mp3       "Funked Up" — joth
+  chill_fever.mp3     "A Chill Fever (Loopable)" — pro-sensory
+  two_left_socks.ogg  "Two Left Socks" — congusbongus
+  mad_bossa.ogg       "Mad Bossa" — spring-spring (CC0 / OGA-BY 3.0, usado como CC0)
+  coffee_house.wav    "Coffee House Bump" — oatcog
+
+Plateia, rufar e gosma — Freesound.org, apenas sons com licença CC0 (cortados e normalizados):
+  crowdcheer: FoolBoyMedia #397434, SoundsExciting #365132, AlaskaRobotics #221568
+  crowdclap:  Zihris #324369, AlaskaRobotics #221567
+  crowdaww:   phmiller42 #124996, WhisperPotato #547589, #324897
+  crowdgasp:  dreamstobecome #439258, #324898, HowardV #264376
+  crowdlaugh: snakebarney #138112, moxobna #76693
+  walla:      IENBA #653920, craigsmith #438369
+  drumroll:   Scheffler #201211, adriann #191718
+  goo:        Breviceps #445117 #445118 #445968, Perel #222363
+Kenney (CC0) adicionais: footstep_concrete/carpet, impactMetal/Glass/Soft/Punch, slime, computerNoise, engineCircular,
+  spaceEngineLow, metalClick/Latch, cloth, card-slide, dice-shake.
+Bilhar — Freesound.org, CC0 (cortados e normalizados):
+  poolclack: Za-Games #539854, Cymeon #245397, AmberdeMeillon #443067
+  poolcue:   craigsmith #675330, mccarthy #42365
+  poolbreak: reg7783 #204187, RossJuterbock #543482
+
+Início de rodada: roundstart_1.ogg — Kenney Interface Sounds, confirmation_002.ogg (CC0).
+https://kenney.nl/assets/interface-sounds
+Adaptado: filtro passa-baixas 2400 Hz, fades curtos, ganho 0,55. Licença original em Blender/third-party/interface-sounds/License.txt.
+
+Sons alegres (27/09) — Kenney (CC0), sem alterações:
+  pocketjoy_1..4: Interface Sounds confirmation_001/003/004, maximize_006 (bola encaçapada; sobe de tom em sequência).
+  https://kenney.nl/assets/interface-sounds
+
+Bolas (29/09): texturas geradas por Blender/ball_textures.py com a fonte Oswald (SIL OFL, Resources/Fonts).
+Contactos da mesa (29/09): tacada, choque entre bolas e abertura = gravações CC0 do Freesound listadas acima (poolcue, poolclack, poolbreak);
+  tabelas (cushion_*) e caçapas (pocket_*, thud_*) = pack Kenney Impact Sounds (CC0). Nenhum som sintetizado nem de estética retro.

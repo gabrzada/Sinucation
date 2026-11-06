@@ -1,0 +1,26 @@
+{
+  "Bottle": {
+    "vertices": 1056,
+    "triangles": 2100
+  },
+  "BottleLarge": {
+    "vertices": 1056,
+    "triangles": 2100
+  },
+  "Radio": {
+    "vertices": 2168,
+    "triangles": 4256
+  },
+  "Cactus": {
+    "vertices": 2470,
+    "triangles": 4824
+  },
+  "PottedPlant": {
+    "vertices": 3568,
+    "triangles": 7068
+  },
+  "FloorLamp": {
+    "vertices": 1430,
+    "triangles": 2764
+  }
+}

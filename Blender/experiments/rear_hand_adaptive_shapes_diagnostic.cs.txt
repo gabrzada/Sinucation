@@ -1,0 +1,81 @@
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Match;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class HandOverlapDiagnostic
+    {
+        [TestCase(Archetype.Square, .1f)] [TestCase(Archetype.Square, .2f)] [TestCase(Archetype.Square, .3f)] [TestCase(Archetype.Circle, .1f)] [TestCase(Archetype.Circle, .2f)] [TestCase(Archetype.Circle, .3f)] [TestCase(Archetype.Triangle, .1f)] [TestCase(Archetype.Triangle, .2f)] [TestCase(Archetype.Triangle, .3f)]
+        public void SampleHandOverlap(Archetype archetype, float pullAmount)
+        {
+            Random.InitState(2026);
+            var settings = new BilliardsPhysicsSettings(); var table = new TableGeometry(settings);
+            int samples = 0, overlapping = 0; float maxDepth = 0f, totalExtra = 0f, maxExtra = 0f; int noExtra = 0;
+            for (int x = -1; x <= 1; x++) for (int z = -1; z <= 1; z++) for (int deg = 0; deg < 360; deg += 45)
+            {
+                var ball = new Vector2(x * table.HalfLength * .7f, z * table.HalfWidth * .7f);
+                float a = deg * Mathf.Deg2Rad; var direction = new Vector2(Mathf.Sin(a), Mathf.Cos(a));
+                var flat = new Vector3(direction.x, 0, direction.y); var stand = ShotMath.StandBehind(ball, direction, table);
+                var holder = new GameObject("HandsDiagnosticActor");
+                holder.transform.SetPositionAndRotation(new Vector3(stand.x, 0, stand.y), Quaternion.Euler(0, ShotMath.WorldYaw(direction), 0));
+                var avatar = AvatarVisual.Create(holder.transform, new PlayerProfile("QA", archetype, Color.cyan));
+                try
+                {
+                    var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                    var bridgeRoot = (Transform)typeof(AvatarVisual).GetField("_bridgeL", flags).GetValue(avatar);
+                    var cueFist = (Transform)typeof(AvatarVisual).GetField("_qaCueFist", flags).GetValue(avatar);
+                    var bridgeMesh = bridgeRoot.Find("GloveL_Bridge").GetComponent<MeshFilter>();
+                    var palmMesh = cueFist.Find("GloveR_CuePalm").GetComponent<MeshFilter>();
+                    var fingerMesh = cueFist.Find("QACueDigits/GloveR_CueFingers").GetComponent<MeshFilter>();
+                    MeshCollider Add(MeshFilter filter) { var collider = filter.gameObject.AddComponent<MeshCollider>(); collider.sharedMesh = filter.sharedMesh; collider.convex = true; return collider; }
+                    var bridgeCollider = Add(bridgeMesh); var palm = Add(palmMesh); var fingers = Add(fingerMesh);
+                    var tilt = Quaternion.AngleAxis(ShotMath.CueTilt(ball, direction, table, settings.BallRadius), Vector3.Cross(Vector3.up, flat)) * flat;
+                    var world = TableView.ToWorld(ball, settings.BallRadius); var tip0 = world - tilt * (settings.BallRadius + .01f);
+                    var bridge = world - flat * .18f; bridge.y = TableView.TopY + .035f;
+                    float lastPull = 0, length = 0, adaptiveExtra = 0;
+                    for (int frame = 0; frame < 150; frame++)
+                    {
+                        Vector3 tip;
+                        if (frame < 120)
+                        {
+                            float pull = frame < 60 ? 0f : (frame - 60) * pullAmount / 59f;
+                            lastPull = avatar.VisualCuePull(tip0, tilt, pull, 1f / 60f); tip = tip0 - tilt * lastPull;
+                            length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .04f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                        }
+                        else
+                        {
+                            float elapsed = (frame - 120) / 60f; float k = Mathf.Clamp01(elapsed / MatchDirector.ShotContactSeconds);
+                            float push = k * k * (lastPull + .01f) + Mathf.Clamp01((elapsed - MatchDirector.ShotContactSeconds) / .12f) * adaptiveExtra;
+                            tip = tip0 - tilt * lastPull + tilt * push;
+                        }
+                        avatar.SetCue(tip, tilt, length, bridge); avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
+                        if (frame == 119)
+                        {
+                            var rear = avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal * AvatarVisual.FistScale);
+                            var front = avatar.LeftHand.TransformPoint(new Vector3(-.0589854f, -.11728474f, -.00291428f));
+                            float separation = Vector3.Dot(rear - front, -tilt);
+                            adaptiveExtra = Mathf.Clamp(separation - (lastPull + .01f) - .25f, 0f, .15f);
+                            totalExtra += adaptiveExtra; maxExtra = Mathf.Max(maxExtra, adaptiveExtra); if (adaptiveExtra < .001f) noExtra++;
+                        }
+                        if (frame < 120) continue;
+                        if (!bridgeRoot.gameObject.activeInHierarchy || !cueFist.gameObject.activeInHierarchy) continue;
+                        bool Overlaps(Collider first, Collider second, out float depth) => Physics.ComputePenetration(first, first.transform.position, first.transform.rotation, second, second.transform.position, second.transform.rotation, out _, out depth);
+                        bool firstHit = Overlaps(bridgeCollider, palm, out float firstDepth);
+                        bool secondHit = Overlaps(bridgeCollider, fingers, out float secondDepth);
+                        samples++; if (!firstHit && !secondHit) continue;
+                        overlapping++; maxDepth = Mathf.Max(maxDepth, firstDepth, secondDepth);
+                        if (overlapping <= 3) Debug.Log($"HAND_OVERLAP x={x} z={z} yaw={deg} frame={frame} depth={Mathf.Max(firstDepth, secondDepth):F5}");
+                    }
+                }
+                finally { Object.DestroyImmediate(holder); }
+            }
+            Debug.Log($"HAND_SUMMARY archetype={archetype} pull={pullAmount} samples={samples} overlapping={overlapping} maxDepth={maxDepth} meanExtra={totalExtra / 72f} maxExtra={maxExtra} noExtra={noExtra}");
+        }
+    }
+}
+

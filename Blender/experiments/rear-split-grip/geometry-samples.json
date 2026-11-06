@@ -1,0 +1,410 @@
+[
+  {
+    "degrees": -25,
+    "overlapping_face_pairs": 304,
+    "palm_clearance": 0.0024076895192265517,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -24,
+    "overlapping_face_pairs": 301,
+    "palm_clearance": 0.0024436916559934622,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -23,
+    "overlapping_face_pairs": 306,
+    "palm_clearance": 0.0024557764977216727,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -22,
+    "overlapping_face_pairs": 300,
+    "palm_clearance": 0.002457391411066056,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -21,
+    "overlapping_face_pairs": 304,
+    "palm_clearance": 0.002459217734634877,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -20,
+    "overlapping_face_pairs": 309,
+    "palm_clearance": 0.0024609676897525794,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -19,
+    "overlapping_face_pairs": 309,
+    "palm_clearance": 0.0024664550423622138,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -18,
+    "overlapping_face_pairs": 316,
+    "palm_clearance": 0.002483961112797261,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -17,
+    "overlapping_face_pairs": 322,
+    "palm_clearance": 0.002511395081877709,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -16,
+    "overlapping_face_pairs": 345,
+    "palm_clearance": 0.002549629598855973,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -15,
+    "overlapping_face_pairs": 350,
+    "palm_clearance": 0.0025985380038619048,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -14,
+    "overlapping_face_pairs": 364,
+    "palm_clearance": 0.002625937514007092,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -13,
+    "overlapping_face_pairs": 373,
+    "palm_clearance": 0.0026389918625354773,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -12,
+    "overlapping_face_pairs": 385,
+    "palm_clearance": 0.002652040623128415,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -11,
+    "overlapping_face_pairs": 380,
+    "palm_clearance": 0.0026584937572479254,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -10,
+    "overlapping_face_pairs": 374,
+    "palm_clearance": 0.0026649655178189284,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -9,
+    "overlapping_face_pairs": 375,
+    "palm_clearance": 0.002671447522938252,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -8,
+    "overlapping_face_pairs": 366,
+    "palm_clearance": 0.0026723062023520476,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -7,
+    "overlapping_face_pairs": 382,
+    "palm_clearance": 0.002672302477061749,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -6,
+    "overlapping_face_pairs": 385,
+    "palm_clearance": 0.002672305271029473,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -5,
+    "overlapping_face_pairs": 380,
+    "palm_clearance": 0.0026723071336746222,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -4,
+    "overlapping_face_pairs": 384,
+    "palm_clearance": 0.002672305271029473,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -3,
+    "overlapping_face_pairs": 397,
+    "palm_clearance": 0.002672305271029473,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -2,
+    "overlapping_face_pairs": 393,
+    "palm_clearance": 0.0026723062023520476,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": -1,
+    "overlapping_face_pairs": 407,
+    "palm_clearance": 0.0026723071336746222,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 0,
+    "overlapping_face_pairs": 410,
+    "palm_clearance": 0.002672305271029473,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 1,
+    "overlapping_face_pairs": 410,
+    "palm_clearance": 0.002672305271029473,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 2,
+    "overlapping_face_pairs": 403,
+    "palm_clearance": 0.002671922497451306,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 3,
+    "overlapping_face_pairs": 399,
+    "palm_clearance": 0.0026656295508146292,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 4,
+    "overlapping_face_pairs": 385,
+    "palm_clearance": 0.0026593505740165717,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 5,
+    "overlapping_face_pairs": 389,
+    "palm_clearance": 0.0026530799791216857,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 6,
+    "overlapping_face_pairs": 386,
+    "palm_clearance": 0.002646825216710568,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 7,
+    "overlapping_face_pairs": 398,
+    "palm_clearance": 0.0026405881494283683,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 8,
+    "overlapping_face_pairs": 388,
+    "palm_clearance": 0.0026343706399202353,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 9,
+    "overlapping_face_pairs": 379,
+    "palm_clearance": 0.0026281680315732962,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 10,
+    "overlapping_face_pairs": 383,
+    "palm_clearance": 0.002621989637613297,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 11,
+    "overlapping_face_pairs": 374,
+    "palm_clearance": 0.002615835458040238,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 12,
+    "overlapping_face_pairs": 373,
+    "palm_clearance": 0.002609708286821843,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 13,
+    "overlapping_face_pairs": 375,
+    "palm_clearance": 0.002603604398667813,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 14,
+    "overlapping_face_pairs": 355,
+    "palm_clearance": 0.002592620380222798,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 15,
+    "overlapping_face_pairs": 347,
+    "palm_clearance": 0.002579800724983216,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 16,
+    "overlapping_face_pairs": 330,
+    "palm_clearance": 0.0025560566559433943,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 17,
+    "overlapping_face_pairs": 317,
+    "palm_clearance": 0.002516627252101899,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 18,
+    "overlapping_face_pairs": 304,
+    "palm_clearance": 0.002487990945577622,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 19,
+    "overlapping_face_pairs": 298,
+    "palm_clearance": 0.0024668750688433654,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 20,
+    "overlapping_face_pairs": 292,
+    "palm_clearance": 0.0024608969092369086,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 21,
+    "overlapping_face_pairs": 284,
+    "palm_clearance": 0.002459951616823674,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 22,
+    "overlapping_face_pairs": 282,
+    "palm_clearance": 0.0024588098153471953,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 23,
+    "overlapping_face_pairs": 277,
+    "palm_clearance": 0.0024567599743604666,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 24,
+    "overlapping_face_pairs": 268,
+    "palm_clearance": 0.00244368513673544,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  },
+  {
+    "degrees": 25,
+    "overlapping_face_pairs": 257,
+    "palm_clearance": 0.002417773880064488,
+    "palm_axis_inside_samples": 0,
+    "fingers_clearance": 0.0023261056616902358,
+    "fingers_axis_inside_samples": 0
+  }
+]

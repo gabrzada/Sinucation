@@ -1,0 +1,10 @@
+{
+  "JukeboxCabinet": {
+    "vertices": 3272,
+    "triangles": 6420
+  },
+  "JukeboxRecords": {
+    "vertices": 2440,
+    "triangles": 4840
+  }
+}

@@ -1,0 +1,43 @@
+using System;
+using System.IO;
+using System.Reflection;
+using System.Text;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using UnityEditor;
+using UnityEngine;
+
+namespace FriendSlop.EditorTools {
+public static class RearPoseGrid {
+ public static void Measure() {
+  var csv=new StringBuilder("cueBlend,poleBlend,maxElbowTravel,minCuffAlignment,maxCueError\n");
+  foreach(float cue in new[]{0f,.25f,.5f,.75f,1f}) foreach(float pole in new[]{0f,.25f,.5f,.75f,1f}) {
+   AvatarVisual.QACueBlend=cue; AvatarVisual.QAPoleBlend=pole;
+   float maxTravel=0f,minAlign=1f,maxError=0f;
+   foreach(int side in new[]{-1,1}) foreach(int variant in new[]{0,1}) {
+    UnityEngine.Random.InitState(2026);
+    var settings=new BilliardsPhysicsSettings(); var table=new TableGeometry(settings);
+    var ball=variant==0?new Vector2(side*.78f,side*.39f):new Vector2(side*.45f,-side*.45f);
+    var direction=variant==0?new Vector2(side,0f):new Vector2(side,side).normalized;
+    var flat=new Vector3(direction.x,0,direction.y); var stand=ShotMath.StandBehind(ball,direction,table);
+    var holder=new GameObject("RearGridActor"); holder.transform.SetPositionAndRotation(new Vector3(stand.x,0,stand.y),Quaternion.Euler(0,ShotMath.WorldYaw(direction),0));
+    var avatar=AvatarVisual.Create(holder.transform,new PlayerProfile("QA",Archetype.Square,Color.cyan));
+    var elbow=(Transform)typeof(AvatarVisual).GetField("_elbowR",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(avatar);
+    var tilt=Quaternion.AngleAxis(ShotMath.CueTilt(ball,direction,table,settings.BallRadius),Vector3.Cross(Vector3.up,flat))*flat;
+    var worldBall=TableView.ToWorld(ball,settings.BallRadius); var tip0=worldBall-tilt*(settings.BallRadius+.01f); var bridge=worldBall-flat*.18f; bridge.y=TableView.TopY+.035f;
+    Vector3 anchor=Vector3.zero;
+    for(int frame=0;frame<150;frame++) {
+     float pull=frame<90?0:(frame-90)*.3f/59f; float visualPull=avatar.VisualCuePull(tip0,tilt,pull,1f/60f);
+     float length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-tilt)+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f); var tip=tip0-tilt*visualPull;
+     avatar.SetCue(tip,tilt,length,bridge);avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
+     if(frame==90) anchor=elbow.position;
+     if(frame>=90) { var wrist=avatar.RightHand; maxTravel=Mathf.Max(maxTravel,Vector3.Distance(anchor,elbow.position)); minAlign=Mathf.Min(minAlign,Vector3.Dot((elbow.position-wrist.position).normalized,wrist.up)); var channel=wrist.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale); maxError=Mathf.Max(maxError,Vector3.ProjectOnPlane(channel-tip,tilt).magnitude); }
+    }
+    UnityEngine.Object.DestroyImmediate(holder);
+   }
+   csv.AppendFormat(System.Globalization.CultureInfo.InvariantCulture,"{0},{1},{2},{3},{4}\n",cue,pole,maxTravel,minAlign,maxError);
+  }
+  File.WriteAllText("../Logs/rear-pose-grid.csv",csv.ToString());
+ }
+}}

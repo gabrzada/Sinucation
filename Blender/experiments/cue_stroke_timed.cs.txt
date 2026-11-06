@@ -1,0 +1,54 @@
+using System.IO;
+using UnityEngine;
+
+namespace FriendSlop.Net
+{
+    // Optional presentation event; it never changes physics or shot acceptance.
+    public struct CueStrokePresentation
+    {
+        public bool Valid, HasStartTime;
+        public double StartedAt;
+        public float Elapsed(double now) => (float)System.Math.Max(0, now - StartedAt);
+        public bool ActiveAt(double now) => !HasStartTime || Elapsed(now) < .55f;
+        public int Sequence, Shooter;
+        public Vector3 Tip, Direction, Bridge;
+        public float Length, ContactTravel, ExtraTravel;
+
+        public bool IsValid => (!HasStartTime || (double.IsFinite(StartedAt) && StartedAt >= 0)) && Sequence > 0 && Shooter >= 0 && Shooter < MatchView.MaxSeats &&
+            Finite(Tip) && Finite(Direction) && Finite(Bridge) &&
+            Tip.sqrMagnitude < 10000f && Bridge.sqrMagnitude < 10000f &&
+            Mathf.Abs(Direction.sqrMagnitude - 1f) < .01f &&
+            Length >= .75f && Length <= 2.4f &&
+            ContactTravel >= 0f && ContactTravel <= .5f && ExtraTravel >= 0f && ExtraTravel <= .15f;
+
+        static bool Finite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
+        static void Vector(BinaryWriter w, Vector3 v) { w.Write(v.x); w.Write(v.y); w.Write(v.z); }
+        static Vector3 Vector(BinaryReader r) => new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+
+        public void Write(BinaryWriter w)
+        {
+            w.Write((byte)2);
+            w.Write(Sequence); w.Write(Shooter);
+            Vector(w, Tip); Vector(w, Direction); Vector(w, Bridge);
+            w.Write(Length); w.Write(ContactTravel); w.Write(ExtraTravel); w.Write(StartedAt);
+        }
+
+        public static bool TryRead(BinaryReader r, out CueStrokePresentation stroke)
+        {
+            stroke = default;
+            long remaining = r.BaseStream.Length - r.BaseStream.Position;
+            if (remaining != 57 && remaining != 65) return false;
+            byte version = r.ReadByte();
+            if ((version != 1 && version != 2) || (version == 1 ? remaining != 57 : remaining != 65)) return false;
+            var value = new CueStrokePresentation {
+                Sequence = r.ReadInt32(), Shooter = r.ReadInt32(),
+                Tip = Vector(r), Direction = Vector(r), Bridge = Vector(r),
+                Length = r.ReadSingle(), ContactTravel = r.ReadSingle(), ExtraTravel = r.ReadSingle()
+            };
+            if (version == 2) { value.HasStartTime = true; value.StartedAt = r.ReadDouble(); }
+            if (!value.IsValid) return false;
+            value.Valid = true; stroke = value; return true;
+        }
+    }
+}
+

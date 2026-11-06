@@ -1,0 +1,17 @@
+{
+  "name": "com.intel.xess",
+  "version": "2.0.5",
+  "displayName": "Intel XeSS",
+  "description": "Intel XeSS for Unity.",
+  "unity": "2021.2",
+ "keywords": [
+    "graphics",
+    "performance",
+    "rendering",
+    "render"
+  ],
+  "author": {
+    "name": "Huang Xing"
+  }
+}
+

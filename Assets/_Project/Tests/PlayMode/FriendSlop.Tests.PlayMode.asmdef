@@ -1,0 +1,7 @@
+{
+  "name": "FriendSlop.Tests.PlayMode",
+  "references": ["FriendSlop"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"]
+}

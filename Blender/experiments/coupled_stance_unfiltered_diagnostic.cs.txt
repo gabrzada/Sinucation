@@ -1,0 +1,119 @@
+using System.Collections.Generic;
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Match;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+namespace FriendSlop.Tests
+{
+    public class CoupledStanceHeadDiagnostic
+    {
+        struct HeadPoseSample
+        {
+            public Vector3 Pivot,HeadPosition,PalmPosition,DigitPosition,CuePosition;
+            public Quaternion PivotRotation,HeadRotation,PalmRotation,DigitRotation,CueRotation;
+            public float Length; public bool FistActive;
+        }
+        [TestCase(42f,.75f)] [TestCase(20f,.75f)] [TestCase(42f,.45f)] [TestCase(20f,.45f)]
+        public void MeasureStrokeAgainstHead(float minSpine,float minStance)
+        {
+            float maxRoll=20f; AvatarVisual.QAAimMinSpine=minSpine; int unsupported=0,gripOffAxis=0; float maxBridgeTravel=0;
+            float roll=0f,gripAdvance=0f; int affectedPoses=0,solvedPoses=0;float maxRollUsed=0;
+            var offsets=new List<Vector3>(); foreach(float pitch in new[]{0f,-10f,10f,-20f,20f}) foreach(float turn in new[]{0f,-10f,10f,-20f,20f}) foreach(float bank in new[]{0f,-10f,10f,-20f,20f,-30f,30f,-35f,35f}) if(Mathf.Abs(bank)<=maxRoll) offsets.Add(new Vector3(pitch,turn,bank)); offsets.Sort((a,b)=>a.sqrMagnitude.CompareTo(b.sqrMagnitude));
+            AvatarVisual.QAAimHeadRoll=roll; AvatarVisual.QASteepGripAdvance=gripAdvance; Random.InitState(2026);
+            var settings=new BilliardsPhysicsSettings(); var table=new TableGeometry(settings);
+            var surface=new CueTableSurface(FsModels.Get("table","TableFrame").Mesh,FsModels.Get("table","Cushions").Mesh);
+            var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+            var cueView=new GameObject("HeadDiagnosticCue").AddComponent<CueView>(); cueView.Initialize(null);
+            var cue=(Transform)typeof(CueView).GetField("_cue",flags).GetValue(cueView); cue.gameObject.SetActive(true);
+            var setLength=typeof(CueView).GetMethod("SetCueLength",flags);
+            var cueColliders=new List<MeshCollider>();
+            MeshCollider Collider(MeshFilter filter) { var c=filter.gameObject.AddComponent<MeshCollider>(); c.sharedMesh=filter.sharedMesh; c.convex=true; return c; }
+            foreach(var filter in cue.GetComponentsInChildren<MeshFilter>()) if(filter.GetComponent<Renderer>().enabled) cueColliders.Add(Collider(filter));
+            var balls=new[] {new Vector2(-table.HalfLength+.035f,-table.HalfWidth+.03f),new Vector2(-table.HalfLength+.035f,0),new Vector2(0,-table.HalfWidth+.03f),new Vector2(table.HalfLength-.035f,table.HalfWidth-.03f),Vector2.zero,new Vector2(.65f,.2f)};
+            int samples=0,cueHits=0,gloveHits=0,lowGloveHits=0; float lowGloveDepth=0,highGloveDepth=0; float maxCueDepth=0,maxGloveDepth=0,maxHeadStep=0;
+            try
+            {
+                foreach(var shape in new[] {Archetype.Square,Archetype.Circle,Archetype.Triangle}) foreach(var ball in balls) for(int yaw=0;yaw<360;yaw+=45)
+                {
+                    var direction=ShotMath.TableDirection(yaw); var flat=new Vector3(direction.x,0,direction.y);
+                    surface.TryFindTilt(TableView.ToWorld(ball,settings.BallRadius),direction,settings.BallRadius,1.1f,ShotMath.CueTilt(ball,direction,table,settings.BallRadius),out float stanceTilt);
+                    ShotMath.QAMinCueStance=Mathf.Lerp(.75f,minStance,Mathf.InverseLerp(15f,50f,stanceTilt));
+                    var stand=ShotMath.StandBehind(ball,direction,table); var holder=new GameObject("HeadDiagnosticAvatar");
+                    holder.transform.SetPositionAndRotation(new Vector3(stand.x,0,stand.y),Quaternion.Euler(0,yaw,0));
+                    var avatar=AvatarVisual.Create(holder.transform,new PlayerProfile("QA",shape,Color.cyan));
+                    try
+                    {
+                        var head=Collider(avatar.Head.Find("Shape/HeadShape").GetComponent<MeshFilter>());
+                        var fist=(Transform)typeof(AvatarVisual).GetField("_qaCueFist",flags).GetValue(avatar);
+                        var palm=Collider(fist.Find("GloveR_CuePalm").GetComponent<MeshFilter>());
+                        var digits=Collider(fist.Find("QACueDigits/GloveR_CueFingers").GetComponent<MeshFilter>());
+                        surface.TryFindTilt(TableView.ToWorld(ball,settings.BallRadius),direction,settings.BallRadius,1.1f,ShotMath.CueTilt(ball,direction,table,settings.BallRadius),out float degrees);
+                        var axis=Quaternion.AngleAxis(degrees,Vector3.Cross(Vector3.up,flat))*flat;
+                        var world=TableView.ToWorld(ball,settings.BallRadius); var tip0=world-axis*(settings.BallRadius+.01f);
+                        var bridge=world-flat*.18f; bridge.y=TableView.TopY+.035f;
+                        Vector3 bridgeStart=Vector3.zero;
+                        var path=new List<HeadPoseSample>(); int hitsBefore=cueHits+gloveHits;
+                        float pull=0,length=1.1f,extra=0; Vector3 previous=avatar.Head.position;
+                        for(int frame=0;frame<150;frame++)
+                        {
+                            Vector3 tip;
+                            if(frame<120) { pull=avatar.VisualCuePull(tip0,axis,frame<60?0:(frame-60)*.3f/59f,1f/60f); tip=tip0-axis*pull; length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-axis)+.04f+AvatarVisual.CueGripFromButt,.75f,2.4f); }
+                            else { float elapsed=(frame-120)/60f; float k=Mathf.Clamp01(elapsed/MatchDirector.ShotContactSeconds); tip=tip0-axis*pull+axis*(k*k*(pull+.01f)+Mathf.Clamp01((elapsed-MatchDirector.ShotContactSeconds)/.12f)*extra); }
+                            avatar.SetCue(tip,axis,length,bridge); avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
+                            if(frame==119) { var rear=avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale); var front=avatar.LeftHand.TransformPoint(new Vector3(-.0589854f,-.11728474f,-.00291428f)); extra=Mathf.Clamp(Vector3.Dot(rear-front,-axis)-(pull+.01f)-.25f,0,.15f); }
+                            setLength.Invoke(cueView,new object[]{length}); cue.position=tip; cue.rotation=Quaternion.LookRotation(axis);
+                            if(frame==119 && !((Transform)typeof(AvatarVisual).GetField("_bridgeL",flags).GetValue(avatar)).gameObject.activeInHierarchy) unsupported++;
+                            var groovePoint=avatar.LeftHand.TransformPoint(new Vector3(-.0589854f,-.11728474f,-.00291428f)); if(frame==60) bridgeStart=groovePoint; if(frame>=60) maxBridgeTravel=Mathf.Max(maxBridgeTravel,Vector3.Distance(bridgeStart,groovePoint));
+                            var rearChannel=avatar.RightHand.TransformPoint(AvatarVisual.FistChannelLocal*AvatarVisual.FistScale); if(frame>=60 && Vector3.ProjectOnPlane(rearChannel-tip,axis).magnitude>.006f) gripOffAxis++;
+                            if(frame>=60) maxHeadStep=Mathf.Max(maxHeadStep,Vector3.Distance(previous,avatar.Head.position)); previous=avatar.Head.position;
+                            if(frame<60 || frame%5!=0) continue;
+                            bool Penetrates(MeshCollider first,out float depth) => Physics.ComputePenetration(first,first.transform.position,first.transform.rotation,head,head.transform.position,head.transform.rotation,out _,out depth);
+                            bool cueHit=false; float cueDepth=0; foreach(var c in cueColliders) if(Penetrates(c,out float depth)) { cueHit=true;cueDepth=Mathf.Max(cueDepth,depth); }
+                            bool gloveHit=false; float gloveDepth=0;
+                            if(fist.gameObject.activeInHierarchy) foreach(var c in new[] {palm,digits}) if(Penetrates(c,out float depth)) { gloveHit=true;gloveDepth=Mathf.Max(gloveDepth,depth); }
+                            path.Add(new HeadPoseSample {Pivot=avatar.Head.position,PivotRotation=avatar.Head.rotation,HeadPosition=head.transform.position,HeadRotation=head.transform.rotation,PalmPosition=palm.transform.position,PalmRotation=palm.transform.rotation,DigitPosition=digits.transform.position,DigitRotation=digits.transform.rotation,CuePosition=tip,CueRotation=cue.rotation,Length=length,FistActive=fist.gameObject.activeInHierarchy});
+                            samples++; if(cueHit) cueHits++; if(gloveHit) { gloveHits++; if(degrees<=12f) {lowGloveHits++;lowGloveDepth=Mathf.Max(lowGloveDepth,gloveDepth);} else highGloveDepth=Mathf.Max(highGloveDepth,gloveDepth); if(gloveHits<=8) Debug.Log($"HEAD_HIT shape={shape} ball={ball:F3} yaw={yaw} degrees={degrees:F3} frame={frame} depth={gloveDepth:F5}"); } maxCueDepth=Mathf.Max(maxCueDepth,cueDepth);maxGloveDepth=Mathf.Max(maxGloveDepth,gloveDepth);
+                        }
+                        if(cueHits+gloveHits>hitsBefore)
+                        {
+                            affectedPoses++; bool solved=false;
+                            foreach(var change in offsets)
+                            {
+                                var desired=Quaternion.Euler(14f+change.x,yaw+change.y,change.z);
+                                bool clear=true;
+                                foreach(var sample in path)
+                                {
+                                    setLength.Invoke(cueView,new object[]{sample.Length}); cue.position=sample.CuePosition; cue.rotation=sample.CueRotation;
+                                    var delta=desired*Quaternion.Inverse(sample.PivotRotation);
+                                    var headPosition=sample.Pivot+delta*(sample.HeadPosition-sample.Pivot);
+                                    var headRotation=delta*sample.HeadRotation;
+                                    bool Hit(MeshCollider collider,Vector3 position,Quaternion rotation) => Physics.ComputePenetration(collider,position,rotation,head,headPosition,headRotation,out _,out _);
+                                    foreach(var c in cueColliders) if(Hit(c,c.transform.position,c.transform.rotation)) {clear=false;break;}
+                                    if(clear && sample.FistActive && (Hit(palm,sample.PalmPosition,sample.PalmRotation)||Hit(digits,sample.DigitPosition,sample.DigitRotation))) clear=false;
+                                    if(!clear) break;
+                                }
+                                if(!clear) continue;
+                                solved=true; solvedPoses++; maxRollUsed=Mathf.Max(maxRollUsed,Mathf.Abs(change.z));
+                                if(solvedPoses<=8) Debug.Log($"HEAD_POSE_FOUND shape={shape} ball={ball:F3} yaw={yaw} elevation={degrees:F3} pitchChange={change.x} yawChange={change.y} roll={change.z}");
+                                break;
+                            }
+                            if(!solved && affectedPoses-solvedPoses<=8) Debug.Log($"HEAD_POSE_UNSOLVED shape={shape} ball={ball:F3} yaw={yaw} elevation={degrees:F3}");
+                        }
+
+                    }
+                    finally { Object.DestroyImmediate(holder); }
+                }
+                Debug.Log($"COUPLED_STANCE minSpine={minSpine} minStance={minStance} unsupported={unsupported} gripOffAxis={gripOffAxis} maxBridgeTravel={maxBridgeTravel} maxRoll={maxRoll} affectedPoses={affectedPoses} solvedPoses={solvedPoses} maxRollUsed={maxRollUsed} roll={roll} gripAdvance={gripAdvance} lowGloveHits={lowGloveHits} lowGloveDepth={lowGloveDepth} highGloveDepth={highGloveDepth} samples={samples} cueHits={cueHits} gloveHits={gloveHits} maxCueDepth={maxCueDepth} maxGloveDepth={maxGloveDepth} maxHeadStep={maxHeadStep}");
+            }
+            finally { Object.DestroyImmediate(cueView.gameObject); }
+        }
+    }
+}
+
+
+
+
+

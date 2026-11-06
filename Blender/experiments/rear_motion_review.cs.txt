@@ -1,0 +1,84 @@
+using System.IO;
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Match;
+using FriendSlop.Presentation;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+
+namespace FriendSlop.EditorTools
+{
+    public static class RearMotionReview
+    {
+        public static void Capture()
+        {
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            RenderSettings.ambientLight = new Color(.6f, .6f, .6f);
+            var light = new GameObject("Key").AddComponent<Light>();
+            light.type = LightType.Directional; light.intensity = 2f;
+            light.transform.rotation = Quaternion.Euler(45, -35, 0);
+            var settings = new BilliardsPhysicsSettings();
+            var table = new GameObject("Table").AddComponent<TableView>(); table.Initialize(settings);
+            var ball = new Vector2(-.9f, .22f);
+            float angle = 45f * Mathf.Deg2Rad;
+            var direction = new Vector2(Mathf.Sin(angle), Mathf.Cos(angle));
+            var stand = ShotMath.StandBehind(ball, direction, table.Geometry);
+            var holder = new GameObject("Actor");
+            holder.transform.SetPositionAndRotation(new Vector3(stand.x, 0, stand.y), Quaternion.Euler(0, ShotMath.WorldYaw(direction), 0));
+            var avatar = AvatarVisual.Create(holder.transform, new PlayerProfile("QA", Archetype.Square, new Color(.37f, .84f, .71f)));
+            var flat = new Vector3(direction.x, 0, direction.y);
+            var tilt = Quaternion.AngleAxis(ShotMath.CueTilt(ball, direction, table.Geometry, settings.BallRadius), Vector3.Cross(Vector3.up, flat)) * flat;
+            var ballWorld = TableView.ToWorld(ball, settings.BallRadius);
+            var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere); sphere.transform.position = ballWorld; sphere.transform.localScale = Vector3.one * settings.BallRadius * 2;
+            var tip0 = ballWorld - tilt * (settings.BallRadius + .01f); var bridge = ballWorld - flat * .18f; bridge.y = TableView.TopY + .035f;
+            var cueView = new GameObject("Cue").AddComponent<CueView>(); cueView.Initialize(null);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var cue = (Transform)typeof(CueView).GetField("_cue", flags).GetValue(cueView);
+            var setLength = typeof(CueView).GetMethod("SetCueLength", flags); cue.gameObject.SetActive(true);
+            var camera = new GameObject("Camera").AddComponent<Camera>(); camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(.84f, .81f, .74f); camera.orthographic = true; camera.orthographicSize = .46f;
+            var rt = new RenderTexture(1100, 920, 24); camera.targetTexture = rt;
+            var output = System.Environment.GetEnvironmentVariable("REAR_REVIEW_OUTPUT") ?? "../Logs/RearMotionCandidate";
+            Directory.CreateDirectory(output);
+            var samples = new System.Text.StringBuilder("frame,elbowTravel,channelAngle\n");
+            var elbow = (Transform)typeof(AvatarVisual).GetField("_elbowR", flags).GetValue(avatar);
+            Vector3 elbowAtRest = Vector3.zero;
+            float lastPull = 0, length = 0; Vector3 cameraTarget = Vector3.zero;
+            for (int frame = 0; frame < 150; frame++)
+            {
+                Vector3 tip;
+                if (frame < 120)
+                {
+                    float pull = frame < 60 ? 0 : (frame - 60) * .3f / 59f;
+                    lastPull = avatar.VisualCuePull(tip0, tilt, pull, 1f / 60f);
+                    tip = tip0 - tilt * lastPull;
+                    length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                }
+                else
+                {
+                    float elapsed = (frame - 120) / 60f;
+                    float k = Mathf.Clamp01(elapsed / MatchDirector.ShotContactSeconds);
+                    float push = k * k * (lastPull + .01f) + Mathf.Clamp01((elapsed - MatchDirector.ShotContactSeconds) / .12f) * .15f;
+                    tip = tip0 - tilt * lastPull + tilt * push;
+                }
+                avatar.SetCue(tip, tilt, length, bridge); avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
+                if (frame == 60) elbowAtRest = elbow.position;
+                if (frame >= 60) samples.AppendFormat(System.Globalization.CultureInfo.InvariantCulture, "{0},{1},{2}\n", frame, Vector3.Distance(elbowAtRest, elbow.position), Vector3.Angle(avatar.RightHand.forward, tilt));
+                setLength.Invoke(cueView, new object[] { length }); cue.position = tip; cue.rotation = Quaternion.LookRotation(tilt);
+                if (frame == 60) cameraTarget = avatar.RightHand.position;
+                if (frame != 60 && frame != 90 && frame != 119 && frame != 129 && frame != 140) continue;
+                foreach (int yaw in new[] { 90, 180 })
+                {
+                    camera.transform.position = cameraTarget + Quaternion.Euler(-25, yaw, 0) * new Vector3(0, 0, 4);
+                    camera.transform.LookAt(cameraTarget); camera.Render(); RenderTexture.active = rt;
+                    var img = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
+                    img.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0); img.Apply();
+                    File.WriteAllBytes(Path.Combine(output, $"{frame}_{yaw}.png"), img.EncodeToPNG()); Object.DestroyImmediate(img);
+                }
+            }
+            RenderTexture.active = null; camera.targetTexture = null; rt.Release(); Object.DestroyImmediate(rt);
+            File.WriteAllText(Path.Combine(output, "samples.csv"), samples.ToString());
+        }
+    }
+}

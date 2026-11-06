@@ -1,0 +1,29 @@
+using FriendSlop.Billiards;
+using FriendSlop.Match;
+using FriendSlop.Net;
+using UnityEngine;
+
+namespace FriendSlop.Presentation
+{
+    // Builds a conservative visual stroke even if the host never rendered the aim.
+    public static class CueStrokeFallback
+    {
+        public static CueStrokePresentation Create(ShotRequest shot, Vector2 cuePosition, TableGeometry table,
+            float ballRadius, double startedAt, Vector3? shoulder)
+        {
+            Vector2 direction=shot.Direction.normalized;
+            var flat=new Vector3(direction.x,0f,direction.y);
+            var right=Vector3.Cross(Vector3.up,flat);
+            float degrees=ShotMath.CueTilt(cuePosition,direction,table,ballRadius);
+            var axis=Quaternion.AngleAxis(degrees,right)*flat;
+            var ball=TableView.ToWorld(cuePosition,ballRadius);
+            var tip=ball-axis*(ballRadius+.01f)+Vector3.up*(shot.SpinY*ballRadius*.6f)+right*(shot.SpinX*ballRadius*.6f);
+            var bridge=ball-flat*.18f;bridge.y=TableView.TopY+.035f;
+            float length=shoulder.HasValue ? Mathf.Clamp(Vector3.Dot(shoulder.Value-tip,-axis)+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f) : 1.1f;
+            float room=Mathf.Max(0f,Vector3.Dot(tip-bridge,axis)-.015f);
+            float pull=Mathf.Clamp01(shot.Power)*Mathf.Min(room,ShotController.MaxPull);
+            return new CueStrokePresentation {Valid=true,HasStartTime=true,StartedAt=startedAt,Sequence=shot.ShotSequence,
+                Shooter=shot.PlayerId,Tip=tip-axis*pull,Direction=axis,Bridge=bridge,Length=length,ContactTravel=pull+.01f,ExtraTravel=0f};
+        }
+    }
+}

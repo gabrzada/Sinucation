@@ -1,0 +1,10 @@
+{
+  "DvdPlayer": {
+    "vertices": 1464,
+    "triangles": 2860
+  },
+  "TvConsole": {
+    "vertices": 2456,
+    "triangles": 4808
+  }
+}

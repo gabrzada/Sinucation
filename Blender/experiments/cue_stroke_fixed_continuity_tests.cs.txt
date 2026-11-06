@@ -1,0 +1,33 @@
+using FriendSlop.Net;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+namespace FriendSlop.Tests
+{
+    public class CueStrokeContinuityTests
+    {
+        [Test] public void ExistingVisibleStrokeKeepsItsLengthUntilItEnds()
+        {
+            Assert.That(CueStrokeContinuity.StrokeLength(true,1f,1.1f),Is.EqualTo(1f));
+            Assert.That(CueStrokeContinuity.StrokeLength(false,1f,1.1f),Is.EqualTo(1.1f));
+        }
+        [Test] public void MatchingStrokeNeverRewindsPastAlreadyVisibleProgress()
+        {
+            var s=new CueStrokePresentation {Shooter=2,Tip=Vector3.zero,Direction=Vector3.forward,ContactTravel=.15f,ExtraTravel=.05f};
+            float floor=CueStrokeContinuity.PreviousProgress(true,2,new Vector3(0,0,.1f),Vector3.forward,s);
+            Assert.That(floor,Is.EqualTo(.1f).Within(.00001f));
+            Assert.That(Mathf.Max(.07f,floor),Is.EqualTo(.1f).Within(.00001f));
+            Assert.That(Mathf.Max(.12f,floor),Is.EqualTo(.12f).Within(.00001f));
+        }
+        [Test] public void DifferentShooterOrAxisNeverCarriesOverOldProgress()
+        {
+            var s=new CueStrokePresentation {Shooter=2,Tip=Vector3.zero,Direction=Vector3.forward,ContactTravel=.15f,ExtraTravel=.05f};
+            Assert.That(CueStrokeContinuity.PreviousProgress(false,2,Vector3.forward,Vector3.forward,s),Is.Zero);
+            Assert.That(CueStrokeContinuity.PreviousProgress(true,1,Vector3.forward,Vector3.forward,s),Is.Zero);
+            Assert.That(CueStrokeContinuity.PreviousProgress(true,2,Vector3.forward,Vector3.right,s),Is.Zero);
+            Assert.That(CueStrokeContinuity.PreviousProgress(true,2,new Vector3(.1f,0,.1f),Vector3.forward,s),Is.Zero);
+            Assert.That(CueStrokeContinuity.PreviousProgress(true,2,new Vector3(0,0,.22f),Vector3.forward,s),Is.EqualTo(.22f).Within(.00001f));
+            Assert.That(CueStrokeContinuity.PreviousProgress(true,2,Vector3.forward,Vector3.forward,s),Is.EqualTo(.5f).Within(.00001f));
+        }
+    }
+}

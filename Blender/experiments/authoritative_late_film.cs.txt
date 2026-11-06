@@ -1,0 +1,33 @@
+using System.IO;
+using System.Reflection;
+using FriendSlop.Net;
+using UnityEngine;
+
+namespace FriendSlop.Presentation
+{
+    // Diagnostic helper used only in the isolated network test build.
+    [DefaultExecutionOrder(32000)]
+    public sealed class QaEndOfFrameFilm : MonoBehaviour
+    {
+        Camera _camera; RenderTexture _target; string _path; int _shooter;
+        CueView _cueView;
+        static readonly FieldInfo CueField=typeof(CueView).GetField("_cue",BindingFlags.Instance|BindingFlags.NonPublic);
+        public void Request(Camera camera,string path,int shooter) {_camera=camera;_path=path;_shooter=shooter;}
+        void LateUpdate()
+        {
+            if(_camera==null || _path==null)return;
+            if(_target==null)_target=new RenderTexture(960,540,24);
+            var net=NetGame.Instance;var avatar=net!=null ? AvatarLocator.Find(net,_shooter) : null;
+            if(_cueView==null)_cueView=FindAnyObjectByType<CueView>();
+            var cue=_cueView!=null ? CueField.GetValue(_cueView) as Transform : null;
+            var ball=net!=null && net.Mirror!=null && net.Mirror.Cue!=null ? net.Mirror.Cue.Position.ToString("F5") : "none";
+            Debug.Log($"[QaFilmState] path={Path.GetFileName(_path)} frame={Time.frameCount} phase={net?.View.Phase} seq={net?.View.ShotSequence} shooter={_shooter} ball={ball} cueActive={cue!=null && cue.gameObject.activeInHierarchy} cue={(cue!=null ? cue.position.ToString("F5") : "none")} left={(avatar!=null ? avatar.LeftHand.position.ToString("F5") : "none")} right={(avatar!=null ? avatar.RightHand.position.ToString("F5") : "none")} gripReady={(avatar!=null && avatar.CueGripReady)}");
+            var previous=RenderTexture.active;var oldTarget=_camera.targetTexture;
+            _camera.targetTexture=_target;_camera.Render();RenderTexture.active=_target;
+            var pixels=new Texture2D(960,540,TextureFormat.RGB24,false);
+            pixels.ReadPixels(new Rect(0,0,960,540),0,0);pixels.Apply();File.WriteAllBytes(_path,pixels.EncodeToPNG());
+            Destroy(pixels);RenderTexture.active=previous;_camera.targetTexture=oldTarget;_path=null;
+        }
+        void OnDestroy() {if(_target!=null){_target.Release();Destroy(_target);}}
+    }
+}

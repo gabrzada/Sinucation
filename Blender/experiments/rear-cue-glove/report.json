@@ -1,0 +1,9 @@
+{
+  "cuff_radius_factor": 0.76,
+  "channel_radius": 0.0125,
+  "channel_center": [
+    -0.007079999893903732,
+    0.0,
+    -0.10147999972105026
+  ]
+}

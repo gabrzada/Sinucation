@@ -1,0 +1,11 @@
+Modelos 3D — todos Creative Commons Zero (CC0 1.0, domínio público), criados por Kenney (www.kenney.nl).
+Uso pessoal, educativo e comercial sem obrigação de crédito; creditamos por cortesia.
+
+(As personagens do jogo são modeladas por código — ToyMeshes/AvatarVisual. O corpo 'Mini Characters' do Kenney foi
+ testado e posto de parte em Assets/_Project/ThirdParty/KenneyMiniCharacters; não entra na build.)
+Furniture/   — "Furniture Kit" (bar, bancos, sofás, candeeiros, colunas, plantas, tapetes, TV…)
+Survival/    — "Survival Kit" (barris, caixotes, baldes, bancada, baú)
+Factory/     — "Factory Kit" 3.0 (passadiços, tubagens, cones, ecrãs, alavancas, grua, máquinas)
+Industrial/  — "City Kit (Industrial)" 2.0 (contentores, tanques, torre de água)
+
+Fonte: https://kenney.nl/assets  (licença: http://creativecommons.org/publicdomain/zero/1.0/)

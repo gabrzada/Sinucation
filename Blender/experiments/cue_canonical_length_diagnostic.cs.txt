@@ -1,0 +1,42 @@
+using System.Globalization;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class CueCanonicalLengthDiagnostic
+    {
+        [Test] public void MeasureStanceBasedLengthAgainstActualShoulder()
+        {
+            var settings=new BilliardsPhysicsSettings();var table=new TableGeometry(settings);
+            var balls=new[] {new Vector2(-table.HalfLength+.035f,-table.HalfWidth+.03f),new Vector2(-table.HalfLength+.035f,0),new Vector2(0,-table.HalfWidth+.03f),new Vector2(table.HalfLength-.035f,table.HalfWidth-.03f),Vector2.zero,new Vector2(.65f,.2f)};
+            foreach(var shape in new[]{Archetype.Square,Archetype.Circle,Archetype.Triangle}) foreach(var ball in balls) for(int yaw=0;yaw<360;yaw+=45)
+            {
+                var dir=ShotMath.TableDirection(yaw);var flat=new Vector3(dir.x,0,dir.y);
+                var stand=ShotMath.StandBehind(ball,dir,table);var root=new GameObject("CanonicalLengthActor");
+                root.transform.SetPositionAndRotation(new Vector3(stand.x,0,stand.y),Quaternion.Euler(0,yaw,0));
+                var avatar=AvatarVisual.Create(root.transform,new PlayerProfile("QA",shape,Color.cyan));
+                try
+                {
+                    float tilt=ShotMath.CueTilt(ball,dir,table,settings.BallRadius);
+                    var axis=Quaternion.AngleAxis(tilt,Vector3.Cross(Vector3.up,flat))*flat;
+                    var world=TableView.ToWorld(ball,settings.BallRadius);var tip=world-axis*(settings.BallRadius+.01f);
+                    var bridge=world-flat*.18f;bridge.y=TableView.TopY+.035f;
+                    for(int frame=0;frame<120;frame++)
+                    {
+                        float length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip,-axis)+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f);
+                        avatar.SetCue(tip,axis,length,bridge);avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
+                    }
+                    float shoulder=Vector3.Dot(avatar.RightShoulderPosition-tip,-axis);
+                    float rootDistance=Vector3.Dot(root.transform.position-tip,-axis);
+                    float desired=Mathf.Clamp(shoulder+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f);
+                    Debug.Log(string.Format(CultureInfo.InvariantCulture,"CANONICAL_LENGTH shape={0} ballX={1:F4} ballZ={2:F4} yaw={3} tilt={4:F4} root={5:F5} shoulder={6:F5} difference={7:F5} desired={8:F5}",shape,ball.x,ball.y,yaw,tilt,rootDistance,shoulder,shoulder-rootDistance,desired));
+                }
+                finally {Object.DestroyImmediate(root);}
+            }
+        }
+    }
+}

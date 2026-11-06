@@ -1,0 +1,33 @@
+        static void RenderPose(AvatarVisual avatar, string label, Vector3 tip, Vector3 direction, float length)
+        {
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var cueView = new GameObject("DiagnosticCue").AddComponent<CueView>(); cueView.Initialize(null);
+            var cue = (Transform)typeof(CueView).GetField("_cue", flags).GetValue(cueView);
+            typeof(CueView).GetMethod("SetCueLength", flags).Invoke(cueView, new object[] { length });
+            cue.gameObject.SetActive(true); cue.position = tip; cue.rotation = Quaternion.LookRotation(direction);
+            var camera = new GameObject("BridgePoseCamera").AddComponent<Camera>();
+            camera.clearFlags = CameraClearFlags.SolidColor; camera.backgroundColor = new Color(.7f,.7f,.68f);
+            camera.orthographic = true; camera.orthographicSize = .48f;
+            var rt = new RenderTexture(1100, 920, 24); camera.targetTexture = rt;
+            var output = "../Logs/BridgePoseRebuilt"; System.IO.Directory.CreateDirectory(output);
+            try
+            {
+                var body = avatar.transform.parent;
+                Vector3 center = Vector3.Lerp(avatar.Head.position, avatar.LeftHand.position, .7f);
+                foreach (int side in new[] { -1, 1 })
+                {
+                    camera.transform.position = center + body.right * (side * 1.1f) + body.forward * .9f + Vector3.up * .65f;
+                    camera.transform.LookAt(center); camera.Render(); RenderTexture.active = rt;
+                    var img = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
+                    img.ReadPixels(new Rect(0,0,rt.width,rt.height),0,0); img.Apply();
+                    System.IO.File.WriteAllBytes(System.IO.Path.Combine(output, label+"_"+side+".png"),img.EncodeToPNG());
+                    Object.DestroyImmediate(img);
+                }
+            }
+            finally
+            {
+                RenderTexture.active = null; camera.targetTexture = null; rt.Release(); Object.DestroyImmediate(rt);
+                Object.DestroyImmediate(camera.gameObject); Object.DestroyImmediate(cueView.gameObject);
+            }
+        }
+

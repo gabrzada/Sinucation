@@ -1,0 +1,7 @@
+{
+  "name": "com.gree.unity-webview",
+  "version": "1.0.0",
+  "displayName": "Unity WebView (Windows)",
+  "description": "GREE unity-webview pinned at 67d9350522a07f10c1629c3facfb7314774d1b3d; Windows native plugin built from source.",
+  "unity": "6000.0"
+}

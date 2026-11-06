@@ -1,0 +1,20 @@
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+namespace FriendSlop.Tests
+{
+    public class GlassesHeadSurfaceDiagnostic
+    {
+        [Test] public void MeasureTriangleSideAtTemple()
+        {
+            var root=new GameObject("TempleSurface");
+            try
+            {
+                var collider=root.AddComponent<MeshCollider>(); collider.sharedMesh=ToyMeshes.TriangleHead;
+                Assert.That(collider.Raycast(new Ray(new Vector3(1f,.145f,-.075f),Vector3.left),out var hit,2f),Is.True);
+                Debug.Log($"TEMPLE_SIDE x={hit.point.x:F6} normal={hit.normal:F4}");
+            }
+            finally {Object.DestroyImmediate(root);}
+        }
+    }
+}

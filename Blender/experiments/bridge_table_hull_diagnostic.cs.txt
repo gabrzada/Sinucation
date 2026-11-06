@@ -1,0 +1,64 @@
+using System.Reflection;
+using FriendSlop.Billiards;
+using FriendSlop.Core;
+using FriendSlop.Presentation;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace FriendSlop.Tests
+{
+    public class PocketBridgeDiagnostic
+    {
+        [TestCase(0f)] [TestCase(4f)] [TestCase(8f)]
+        public void MeasureBridgeAgainstCurrentTableMesh(float extraTilt)
+        {
+            Random.InitState(2026);
+            var settings = new BilliardsPhysicsSettings();
+            var tableObject = new GameObject("BridgeDiagnosticTable");
+            var table = tableObject.AddComponent<TableView>(); table.Initialize(settings);
+            MeshCollider frameCollider = null;
+            foreach (var filter in tableObject.GetComponentsInChildren<MeshFilter>())
+                if (filter.name == "TableFrame") { frameCollider = filter.gameObject.AddComponent<MeshCollider>(); frameCollider.sharedMesh = filter.sharedMesh; break; }
+            Assert.That(frameCollider, Is.Not.Null, "diagnostic must inspect the current Blender table frame");
+            int measured = 0, collisions = 0; float worstDepth = 0, totalDepth = 0;
+            try
+            {
+                for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) for (int yaw = 0; yaw < 360; yaw += 45)
+                {
+                    var ball = new Vector2(x * table.Geometry.HalfLength * .46f, z * table.Geometry.HalfWidth * .46f);
+                    float radians = yaw * Mathf.Deg2Rad;
+                    var direction = new Vector2(Mathf.Sin(radians), Mathf.Cos(radians));
+                    var flat = new Vector3(direction.x, 0, direction.y);
+                    var stand = ShotMath.StandBehind(ball, direction, table.Geometry);
+                    var holder = new GameObject("BridgeDiagnosticAvatar");
+                    holder.transform.SetPositionAndRotation(new Vector3(stand.x, 0, stand.y), Quaternion.Euler(0, ShotMath.WorldYaw(direction), 0));
+                    var avatar = AvatarVisual.Create(holder.transform, new PlayerProfile("QA", Archetype.Square, Color.cyan));
+                    try
+                    {
+                        float degrees = ShotMath.CueTilt(ball, direction, table.Geometry, settings.BallRadius) + extraTilt;
+                        var axis = Quaternion.AngleAxis(degrees, Vector3.Cross(Vector3.up, flat)) * flat;
+                        var world = TableView.ToWorld(ball, settings.BallRadius);
+                        var tip = world - axis * (settings.BallRadius + .01f);
+                        var bridge = world - flat * .18f; bridge.y = TableView.TopY + .035f;
+                        for (int frame = 0; frame < 120; frame++)
+                        {
+                            float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip, -axis) + .04f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                            avatar.SetCue(tip, axis, length, bridge); avatar.Animate(1f/60f, AvatarPose.Aiming, 10f, false);
+                        }
+                        var root = (Transform)typeof(AvatarVisual).GetField("_bridgeL", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(avatar);
+                        if (!root.gameObject.activeInHierarchy) continue;
+                        var mesh = root.Find("GloveL_Bridge").GetComponent<MeshFilter>();
+                        var hand = mesh.gameObject.AddComponent<MeshCollider>(); hand.sharedMesh = mesh.sharedMesh; hand.convex = true;
+                        measured++;
+                        if (!Physics.ComputePenetration(hand, hand.transform.position, hand.transform.rotation, frameCollider, frameCollider.transform.position, frameCollider.transform.rotation, out var normal, out float depth)) continue;
+                        collisions++; totalDepth += depth; worstDepth = Mathf.Max(worstDepth, depth);
+                        if (collisions <= 8) Debug.Log($"BRIDGE_TABLE x={x} z={z} yaw={yaw} tilt={degrees:F3} depth={depth:F5} normal={normal:F3}");
+                    }
+                    finally { Object.DestroyImmediate(holder); }
+                }
+                Debug.Log($"BRIDGE_TABLE_SUMMARY extraTilt={extraTilt} measured={measured} collisions={collisions} worstDepth={worstDepth} totalDepth={totalDepth}");
+            }
+            finally { Object.DestroyImmediate(tableObject); }
+        }
+    }
+}

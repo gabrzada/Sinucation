@@ -19,14 +19,14 @@ MonoBehaviour:
     m_StripRuntimeDebugShaders: 1
   m_URPShaderStrippingSetting:
     m_Version: 0
-    m_StripUnusedPostProcessingVariantsAndResources: 1
+    m_StripUnusedPostProcessingVariantsAndResources: 0
     m_StripUnusedVariants: 1
     m_StripScreenCoordOverrideVariants: 1
     m_Strip2DUnusedVariants: 0
   m_ShaderVariantLogLevel: 0
   m_ExportShaderVariants: 1
   m_StripDebugVariants: 1
-  m_StripUnusedPostProcessingVariants: 1
+  m_StripUnusedPostProcessingVariants: 0
   m_StripUnusedVariants: 1
   m_StripScreenCoordOverrideVariants: 1
   supportRuntimeDebugDisplay: 0
@@ -78,7 +78,32 @@ MonoBehaviour:
       - rid: 5837653035394007045
       - rid: 5837653035394007046
     m_RuntimeSettings:
-      m_List: []
+      m_List:
+      - rid: 6852985685364965378
+      - rid: 6852985685364965380
+      - rid: 6852985685364965381
+      - rid: 6852985685364965384
+      - rid: 6852985685364965387
+      - rid: 6852985685364965392
+      - rid: 6852985685364965394
+      - rid: 8712630790384254976
+      - rid: 4284062438471237637
+      - rid: 5747374308340793346
+      - rid: 5747374308340793347
+      - rid: 5747374308340793348
+      - rid: 6588237625532874753
+      - rid: 6588237625532874755
+      - rid: 6588237625532874757
+      - rid: 6588237625532874758
+      - rid: 6588237625532874759
+      - rid: 6588237625532874761
+      - rid: 6588237625532874762
+      - rid: 5837653035394007041
+      - rid: 5837653035394007042
+      - rid: 5837653035394007043
+      - rid: 5837653035394007044
+      - rid: 5837653035394007045
+      - rid: 5837653035394007046
   m_AssetVersion: 14
   m_ObsoleteDefaultVolumeProfile: {fileID: 0}
   m_RenderingLayerNames:
@@ -218,7 +243,9 @@ MonoBehaviour:
       type: {class: Shadow2DGeometrySettings, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.2D.Runtime}
       data:
         m_Version: 0
-        m_Generators: []
+        m_Generators:
+        - rid: 5837653035394007047
+        - rid: 5837653035394007048
         m_GeometryVersion: 0
     - rid: 5837653035394007042
       type: {class: URPExposureSettings, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.Runtime}
@@ -261,6 +288,12 @@ MonoBehaviour:
         m_PatchAllocationShader: {fileID: 7200000, guid: b271ec1ddd8048458fa529e8e7cfe960, type: 3}
         m_EmissiveTriangleAdditionComputeShader: {fileID: 7200000, guid: 2e583cebf11e4785b8a5b0d8f7b20ab6, type: 3}
         m_EmissiveTriangleRemovalComputeShader: {fileID: 7200000, guid: 3d386645a85b4e758a7b7eb1bf87fa24, type: 3}
+    - rid: 5837653035394007047
+      type: {class: LegacyShadowGeometryGenerator, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.2D.Runtime}
+      data: 
+    - rid: 5837653035394007048
+      type: {class: SoftShadowGeometryGenerator, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.2D.Runtime}
+      data: 
     - rid: 6588237625532874752
       type: {class: URPTerrainShaderSetting, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.Runtime}
       data:
@@ -375,7 +408,7 @@ MonoBehaviour:
       type: {class: URPShaderStrippingSetting, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.Runtime}
       data:
         m_Version: 0
-        m_StripUnusedPostProcessingVariantsAndResources: 1
+        m_StripUnusedPostProcessingVariantsAndResources: 0
         m_StripUnusedVariants: 1
         m_StripScreenCoordOverrideVariants: 1
         m_Strip2DUnusedVariants: 0
