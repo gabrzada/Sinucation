@@ -238,7 +238,7 @@ namespace FriendSlop.Presentation
             float visualPull = avatar != null ? avatar.VisualCuePull(tip0, tilt, pull, Time.deltaTime) : pull;
             Vector3 tip = tip0 - tilt * visualPull;
 
-            // Taco à medida do boneco: a mão direita agarra-o 20 cm atrás do ombro e sobra só a ponta do punho
+            // Taco à medida do boneco: a mão direita agarra-o CueGripBehindShoulder atrás do ombro e sobra só a ponta do punho
             // (antes tinha 1,36 m e ficava a sair pelas costas). O punho está preso ao taco: ao puxar, a mão vai
             // com ele; a ponte fica pousada no pano, 18 cm atrás da branca.
             float length = 1.1f;
@@ -247,7 +247,7 @@ namespace FriendSlop.Presentation
             if (avatar != null)
             {
                 float shoulderT = Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt);
-                length = Mathf.Clamp(shoulderT + 0.2f + AvatarVisual.CueGripFromButt, 0.75f, 2.4f);
+                length = Mathf.Clamp(shoulderT + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, 0.75f, 2.4f);
                 avatar.SetCue(tip, tilt, length, bridge);
                 // Keep updating the hand target while the pose settles; reveal the remote cue
                 // only after the gripping hand has reached it.

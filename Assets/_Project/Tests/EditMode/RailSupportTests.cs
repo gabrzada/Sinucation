@@ -31,7 +31,7 @@ namespace FriendSlop.Tests
                 bridge.y = TableView.TopY + .035f;
                 for (int i = 0; i < 120; i++)
                 {
-                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip, -tilt) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, .75f, 2.4f);
                     avatar.SetCue(tip, tilt, length, bridge);
                     avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
                 }

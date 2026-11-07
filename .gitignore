@@ -122,3 +122,6 @@ __pycache__/
 .env.*
 !.env.example
 /Blender/third-party/unity-webview/*/plugins/Windows/packages/
+
+# Ambiente local de desenvolvimento (Unity, Hub, uv, logs) — fica fora do repositório.
+/DEV/

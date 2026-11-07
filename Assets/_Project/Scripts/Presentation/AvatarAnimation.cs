@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace FriendSlop.Presentation
@@ -28,6 +28,22 @@ namespace FriendSlop.Presentation
 
         /// <summary>A mão direita agarra o taco a esta distância do fim do punho.</summary>
         public const float CueGripFromButt = 0.24f;
+        /// <summary>
+        /// Pegada traseira atrás da projecção do ombro no taco. Com o braço curto do boneco, a mão perto da linha do
+        /// ombro deixa o cotovelo por cima dela: o antebraço cai quase a direito e balança para trás no recuo.
+        /// </summary>
+        public const float CueGripBehindShoulder = 0.03f;
+        /// <summary>Recuo visual máximo do taco. A força vem do recuo pedido; este só limita o balanço do braço.</summary>
+        public const float MaxVisualBackswing = 0.07f;
+        /// <summary>Torção do tronco na mira: ombro de trás alto, para o braço trabalhar como um pêndulo.</summary>
+        const float AimTwist = 78f;
+        /// <summary>Cotovelo → pulso no esqueleto (pivô da mão).</summary>
+        const float RearForearm = 0.16f;
+        /// <summary>
+        /// Direcção cotovelo → mão para que a luva da ponte foi modelada (BRIDGE_FOREARM em Blender/gloves.py),
+        /// no referencial horizontal do taco: x à direita, y para cima, z para a bola.
+        /// </summary>
+        public static readonly Vector3 BridgeForearmLocal = new Vector3(.55f, -.48f, .68f).normalized;
 
         struct Channels
         {
@@ -104,6 +120,7 @@ namespace FriendSlop.Presentation
         float _knockAngle;
         float _knockVel;
         float _ikWeight;
+        float _lateCueDt;
         bool _cueFistActive;
         float _headRadius = -1f;
         Vector3 _headCenterLocal;
@@ -146,7 +163,7 @@ namespace FriendSlop.Presentation
             // transition can make the cue jump when the bridge glove becomes active.
             if (!_bridgeL.gameObject.activeSelf) return _visualCuePull = 0f;
             var groove = _handL.TransformPoint(new Vector3(-.0589854f, -.11728474f, -.00291428f));
-            float room = Mathf.Clamp(Vector3.Dot(tipAtRest - groove, cueDirection.normalized) - .015f, 0f, ShotController.MaxPull);
+            float room = Mathf.Clamp(Vector3.Dot(tipAtRest - groove, cueDirection.normalized) - .015f, 0f, Mathf.Min(ShotController.MaxPull, MaxVisualBackswing));
             float desired = Mathf.Clamp01(requestedPull / ShotController.MaxPull) * room;
             _visualCuePull = Mathf.Min(room, Mathf.MoveTowards(_visualCuePull, desired, Mathf.Max(0f, dt) * 1.2f));
             return _visualCuePull;
@@ -227,7 +244,7 @@ namespace FriendSlop.Presentation
                     c.SpineX = _aimSpine;
                     c.SpineY = 0f;
                     c.SpineZ = -14f;
-                    c.SpineTwist = 38f;
+                    c.SpineTwist = AimTwist;
                     c.HeadX = 0f;
                     c.LegL = -22f;
                     c.LegR = 18f;
@@ -345,6 +362,7 @@ namespace FriendSlop.Presentation
         /// <summary>Andar/correr, apontar o taco, segurar o revólver, celebrar, emotes, queda e fantasma.</summary>
         public void Animate(float dt, AvatarPose pose, float pitch, bool highlighted)
         {
+            _lateCueDt = 0f;
             if (_rig == null || dt <= 0f) return;
             if (UpdateRagdoll(Mathf.Min(dt, 0.1f)))
             {
@@ -586,6 +604,10 @@ namespace FriendSlop.Presentation
             _shoulderR.localRotation = E(c.ShR);
             _elbowL.localRotation = Quaternion.Euler(c.ElL, 0f, 0f);
             _elbowR.localRotation = Quaternion.Euler(c.ElR, 0f, 0f);
+            // The cue, bridge and gun IK rotate the hands in world space. Start every frame from the
+            // rest pose, like the other bones, or the last grip stays baked in after the IK ends.
+            _handL.localRotation = Quaternion.identity;
+            _handR.localRotation = Quaternion.identity;
 
             ApplyKnockdown(dt, lookYaw);
             // Keep the cue under the cheek instead of through the oversized head while aiming.
@@ -594,7 +616,12 @@ namespace FriendSlop.Presentation
             ApplyHead(c, dt, lookYaw);
             _head.position -= _rig.right * ((_built.Archetype == FriendSlop.Core.Archetype.Triangle ? .11f : .09f) * _aimHead);
             _shoulderL.localPosition = new Vector3(-.2f, .34f, 0f);
-            ApplyCueIK(dt, pose);
+            // CueView publishes the rendered cue in LateUpdate. Solve the hands once,
+            // after that target exists, while gun and recovery poses keep their priority.
+            if (Application.isPlaying && pose == AvatarPose.Aiming && !GunRequested && _gunIk < .01f && _ragBlend >= 1f)
+                _lateCueDt = dt;
+            else
+                ApplyCueIK(dt, pose);
             ApplyGunIK(dt, pose);
             ApplyRagdollRecovery(dt);
             UpdateEyes(dt, pose);
@@ -738,6 +765,20 @@ namespace FriendSlop.Presentation
         }
 
         /// <summary>IK analítico de dois ossos: ombro → cotovelo → mão, com o cotovelo virado para <paramref name="pole"/>.</summary>
+        /// <summary>Posição do cotovelo de um IK de dois ossos, sem mexer no esqueleto (mesma regra de <see cref="SolveArm"/>).</summary>
+        Vector3 ElbowPoint(Vector3 s, Vector3 target, Vector3 pole, float upper, float lower)
+        {
+            Vector3 toTarget = target - s;
+            float d = Mathf.Clamp(toTarget.magnitude, 0.05f, upper + lower - 0.002f);
+            Vector3 dir = toTarget.normalized;
+            Vector3 n = Vector3.Cross(dir, pole);
+            if (n.sqrMagnitude < 1e-5f) n = _rig.right;
+            Vector3 perp = Vector3.Cross(n.normalized, dir).normalized;
+            float cosA = Mathf.Clamp((upper * upper + d * d - lower * lower) / (2f * upper * d), -1f, 1f);
+            float a = Mathf.Acos(cosA);
+            return s + (dir * Mathf.Cos(a) + perp * Mathf.Sin(a)) * upper;
+        }
+
         void SolveArm(Transform shoulder, Transform elbow, Vector3 target, Vector3 pole, float weight, float forearmLength = ForearmToGrip)
         {
             Vector3 s = shoulder.position;
@@ -793,11 +834,16 @@ namespace FriendSlop.Presentation
             Vector3 left = Vector3.zero, right = Vector3.zero;
             bool bridgeFeasible = false;
             Quaternion bridgeRotation = Quaternion.identity;
-            // The fist's finger channel lies on its local Z axis. Orient that axis along the cue,
-            // then solve for the wrist that puts the channel at the grip point.
-            var cueUp = Vector3.ProjectOnPlane(-_rig.right, _cueDir);
+            Vector3 bridgeForearm = Vector3.down;
+            // The fist's finger channel lies on its local Z axis (thumb side toward the tip) and the
+            // cuff on +Y. The channel follows the cue; the roll around the cue is chosen below so the
+            // cuff faces the elbow and the hand hangs from the forearm (pendulum stroke).
+            var cueUp = Vector3.ProjectOnPlane(Vector3.up, _cueDir);
             if (cueUp.sqrMagnitude < 1e-6f) cueUp = Vector3.ProjectOnPlane(_rig.forward, _cueDir);
             var cueHandRotation = Quaternion.LookRotation(_cueDir, cueUp.normalized);
+            // Elbow up and out, a little back: the upper arm rises from the raised rear shoulder.
+            Vector3 poleR = (Vector3.up * .77f + _rig.right * .6f - _cueDir * .2f).normalized;
+            Vector3 straightElbow = _shoulderR.position + poleR * UpperArm;
             float reachable = 0f;
             if (recent)
             {
@@ -809,16 +855,24 @@ namespace FriendSlop.Presentation
                 float gripT = Mathf.Max(0.3f, _cueLength - CueGripFromButt);
                 // If the fixed grip point moves out of reach during the pull, slide the grip
                 // along the cue to the closest reachable point instead of leaving it outside the glove.
-                Vector3 wristAxisOrigin = _cueTip - cueHandRotation * (FistChannelLocal * FistScale);
                 Vector3 axis = -_cueDir;
-                Vector3 shoulderOffset = _shoulderR.position - wristAxisOrigin;
+                Vector3 channel = FistChannelLocal * FistScale;
+                float handSpan = RearForearm + channel.magnitude;
+                Vector3 shoulderOffset = _shoulderR.position - _cueTip;
                 float closestT = Vector3.Dot(shoulderOffset, axis);
                 float perpendicularSqr = (shoulderOffset - axis * closestT).sqrMagnitude;
-                float wristReach = UpperArm + 0.16f - 0.004f;
-                float halfSpan = Mathf.Sqrt(Mathf.Max(0f, wristReach * wristReach - perpendicularSqr));
+                float gripReach = UpperArm + handSpan - 0.015f;
+                float halfSpan = Mathf.Sqrt(Mathf.Max(0f, gripReach * gripReach - perpendicularSqr));
                 gripT = Mathf.Clamp(gripT, closestT - halfSpan, closestT + halfSpan);
                 gripT = Mathf.Clamp(gripT, 0f, _cueLength);
-                right = wristAxisOrigin + axis * gripT;
+                Vector3 grip = _cueTip + axis * gripT;
+                // Solve the arm as if forearm and hand were one straight piece ending at the grip, then
+                // roll the glove so its cuff points at that elbow: the wrist stays nearly straight. The
+                // roll depends only on the shoulder, the grip and the pole, so it cannot feed back on itself.
+                straightElbow = ElbowPoint(_shoulderR.position, grip, poleR, UpperArm, handSpan);
+                Vector3 cuff = Vector3.ProjectOnPlane(straightElbow - grip, _cueDir);
+                if (cuff.sqrMagnitude > 1e-6f) cueHandRotation = Quaternion.LookRotation(_cueDir, cuff.normalized);
+                right = grip - cueHandRotation * channel;
                 float bridgeT = Mathf.Max(.01f, Vector3.Dot(_bridge - _cueTip, -_cueDir));
                 Vector3 sl = _shoulderL.position;
                 float tc = Vector3.Dot(sl - _cueTip, -_cueDir);
@@ -836,7 +890,9 @@ namespace FriendSlop.Presentation
                     if (horizontal.sqrMagnitude > 1e-6f)
                     {
                         var bridgeLocal = new Quaternion(-.45966515f, .77662259f, -.21941277f, .37070662f);
-                        bridgeRotation = Quaternion.LookRotation(horizontal.normalized, Vector3.up) * bridgeLocal;
+                        var bridgeFrame = Quaternion.LookRotation(horizontal.normalized, Vector3.up);
+                        bridgeRotation = bridgeFrame * bridgeLocal;
+                        bridgeForearm = bridgeFrame * BridgeForearmLocal;
                         var groove = new Vector3(-.0589854f, -.11728474f, -.00291428f);
                         Vector3 wristOrigin = _cueTip - bridgeRotation * groove;
                         Vector3 bridgeOffset = _shoulderL.position - wristOrigin;
@@ -870,13 +926,6 @@ namespace FriendSlop.Presentation
             }
             _ikWeight = Damp(_ikWeight, 1f, 10f, dt);
             if (_ikWeight < 0.01f) return;
-            // Aim the elbow toward the continuation of the glove's wrist, so the forearm
-            // approaches its cuff instead of crossing the fingers gripping the cue.
-            Vector3 cuffPole = (right + cueHandRotation * Vector3.up * .16f - _shoulderR.position).normalized;
-            // Bias the elbow slightly back and up, closer to a pendulum stroke, while
-            // keeping the forearm aligned with the cuff that surrounds the gripping hand.
-            Vector3 backswingPole = (-_cueDir + Vector3.up * .25f).normalized;
-            Vector3 poleR = Vector3.Slerp(cuffPole, backswingPole, .25f).normalized;
             Vector3 poleL = (-_rig.right * 0.55f + _rig.up * 0.8f + _rig.forward * 0.2f).normalized;
             if (bridgeFeasible)
             {
@@ -884,7 +933,11 @@ namespace FriendSlop.Presentation
                 Vector3 toBridge = left - _shoulderL.position;
                 float extension = Mathf.Clamp(toBridge.magnitude - (UpperArm + .16f - .002f), 0f, .03f);
                 if (toBridge.sqrMagnitude > 1e-6f) _shoulderL.position += toBridge.normalized * (extension * _ikWeight);
-                SolveArm(_shoulderL, _elbowL, left, poleL, _ikWeight, .16f);
+                // The bridge glove was modelled for a forearm arriving from behind, left and above
+                // (Blender/gloves.py, BRIDGE_FOREARM). Bend the elbow toward where that forearm starts,
+                // so the sleeve meets the cuff instead of dropping onto the hand from above.
+                Vector3 bridgeElbow = left - bridgeForearm * .16f;
+                SolveArm(_shoulderL, _elbowL, left, bridgeElbow - _shoulderL.position, _ikWeight, .16f);
                 _handL.rotation = Quaternion.Slerp(_handL.rotation, bridgeRotation, _ikWeight);
                 SetCueBridge(_ikWeight > .4f);
             }
@@ -894,7 +947,9 @@ namespace FriendSlop.Presentation
                 SolveArm(_shoulderL, _elbowL, left, poleL, _ikWeight * reachable);
             }
             // Elbow-to-wrist is 0.16 m in this rig; the hand's channel is offset from the wrist.
-            SolveArm(_shoulderR, _elbowR, right, poleR, _ikWeight, 0.16f);
+            // The wrist sits close to the shoulder in this folded pendulum pose, where a fixed pole can
+            // line up with shoulder → wrist and flip the elbow. Bend toward the straight-arm elbow instead.
+            SolveArm(_shoulderR, _elbowR, right, straightElbow - _shoulderR.position, _ikWeight, RearForearm);
             _handR.rotation = Quaternion.Slerp(_handR.rotation, cueHandRotation, _ikWeight);
             _cueFistActive = _ikWeight > 0.4f;
             SetFist(true, _cueFistActive);

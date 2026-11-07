@@ -207,7 +207,7 @@ namespace FriendSlop.Presentation
                 Vector3 ball = _holder.position + fwd * 0.8f + right * ShotMath.StanceSide + Vector3.up * (TableView.TopY + 0.029f);
                 Vector3 tip0 = ball - tilt * 0.04f;
                 Vector3 tip = tip0 - tilt * pull;
-                float length = Mathf.Clamp(Vector3.Dot(_avatar.RightShoulderPosition - tip0, -tilt) + 0.2f + AvatarVisual.CueGripFromButt, 0.75f, 2.4f);
+                float length = Mathf.Clamp(Vector3.Dot(_avatar.RightShoulderPosition - tip0, -tilt) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, 0.75f, 2.4f);
                 _labTable.position = _holder.position + fwd * (0.23f + 1.1f) + Vector3.up * (TableView.TopY * 0.5f);
                 _labTable.rotation = Quaternion.LookRotation(fwd);
                 _labBall.position = ball;

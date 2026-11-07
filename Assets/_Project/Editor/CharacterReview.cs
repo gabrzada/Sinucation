@@ -79,7 +79,7 @@ namespace FriendSlop.EditorTools
                     {
                         float pull = f < 60 ? 0f : f < 80 ? 0.2f : -0.12f;
                         var tip = tip0 - dirCue * pull;
-                        float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -dirCue) + 0.2f + AvatarVisual.CueGripFromButt, 0.75f, 2.4f);
+                        float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -dirCue) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, 0.75f, 2.4f);
                         avatar.SetCue(tip, dirCue, length, bridge);
                         avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
                         cue.transform.localScale = new Vector3(0.018f, length * 0.5f, 0.018f);

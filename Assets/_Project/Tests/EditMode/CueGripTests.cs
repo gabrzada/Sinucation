@@ -38,7 +38,7 @@ namespace FriendSlop.Tests
                         float pull = frame < 60 ? 0f : (frame - 60) * .3f / 59f;
                         lastPull = avatar.VisualCuePull(tip0, tilt, pull, 1f / 60f);
                         tip = tip0 - tilt * lastPull;
-                        length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                        length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, .75f, 2.4f);
                     }
                     else
                     {
@@ -86,7 +86,7 @@ namespace FriendSlop.Tests
                 {
                     float visualPull = avatar.VisualCuePull(tip0, tilt, ShotController.MaxPull, 1f / 60f);
                     if (frame > 0) Assert.That(Mathf.Abs(visualPull - previous), Is.LessThan(.021f), "the cue should not jump as the bridge pose settles");
-                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, .75f, 2.4f);
                     avatar.SetCue(tip0 - tilt * visualPull, tilt, length, bridge);
                     avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
                     previous = visualPull;
@@ -148,7 +148,7 @@ namespace FriendSlop.Tests
                 float length = 0f;
                 for (int i = 0; i < 100; i++)
                 {
-                    length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                    length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, .75f, 2.4f);
                     avatar.SetCue(tip, tilt, length, bridge);
                     avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
                 }
@@ -188,7 +188,7 @@ namespace FriendSlop.Tests
                     float pull = frame < 90 ? 0f : frame < 150 ? (frame - 90) * .3f / 59f : (209 - frame) * .3f / 59f;
                     float visualPull = avatar.VisualCuePull(tip0, tilt, pull);
                     var tip = tip0 - tilt * visualPull;
-                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, .75f, 2.4f);
                     avatar.SetCue(tip, tilt, length, bridge);
                     avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
                     var groove = avatar.LeftHand.TransformPoint(grooveLocal);
@@ -231,7 +231,7 @@ namespace FriendSlop.Tests
                 {
                     float pull = frame < 60 ? 0f : (frame - 60) * .3f / 59f;
                     var tip = tip0 - tilt * pull;
-                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + .2f + AvatarVisual.CueGripFromButt, .75f, 2.4f);
+                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition - tip0, -tilt) + AvatarVisual.CueGripBehindShoulder + AvatarVisual.CueGripFromButt, .75f, 2.4f);
                     avatar.SetCue(tip, tilt, length, bridge);
                     avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
                     var groove = avatar.LeftHand.TransformPoint(grooveLocal);
@@ -264,7 +264,7 @@ namespace FriendSlop.Tests
                 var bridge=ball-Vector3.forward*.18f;bridge.y=TableView.TopY+.035f;
                 for(int i=0;i<120;i++)
                 {
-                    float length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-direction)+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f);
+                    float length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-direction)+AvatarVisual.CueGripBehindShoulder+AvatarVisual.CueGripFromButt,.75f,2.4f);
                     avatar.SetCue(tip,direction,length,bridge);avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
                 }
                 var fist=avatar.RightHand.Find("GloveFist");

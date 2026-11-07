@@ -22,7 +22,7 @@ public class RearFollowThroughTests {
    float lastPull=0,length=0; Quaternion previous=Quaternion.identity; Vector3 previousElbow=Vector3.zero, previousTip=Vector3.zero;
    for(int frame=0;frame<150;frame++) {
     Vector3 tip;
-    if(frame<120) { float pull=frame<60?0:(frame-60)*.3f/59f;lastPull=avatar.VisualCuePull(tip0,tilt,pull,1f/60f);tip=tip0-tilt*lastPull;length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-tilt)+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f); }
+    if(frame<120) { float pull=frame<60?0:(frame-60)*.3f/59f;lastPull=avatar.VisualCuePull(tip0,tilt,pull,1f/60f);tip=tip0-tilt*lastPull;length=Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip0,-tilt)+AvatarVisual.CueGripBehindShoulder+AvatarVisual.CueGripFromButt,.75f,2.4f); }
     else { float elapsed=(frame-120)/60f;float k=Mathf.Clamp01(elapsed/MatchDirector.ShotContactSeconds);float push=k*k*(lastPull+.01f)+Mathf.Clamp01((elapsed-MatchDirector.ShotContactSeconds)/.12f)*.15f;tip=tip0-tilt*lastPull+tilt*push; }
     avatar.SetCue(tip,tilt,length,bridge);avatar.Animate(1f/60f,AvatarPose.Aiming,10f,false);
     if(frame>=120) {

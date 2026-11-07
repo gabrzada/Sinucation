@@ -20,6 +20,7 @@ namespace FriendSlop.Presentation
     /// Malhas suaves (ToyMeshes) e esqueleto próprio animado por código — sem Animator.
     /// Só visual: não tem colliders competitivos (CHAR-002/003).
     /// </summary>
+    [DefaultExecutionOrder(100)]
     public sealed partial class AvatarVisual : MonoBehaviour
     {
         public const float EyeHeight = 1.1f;
@@ -592,6 +593,11 @@ namespace FriendSlop.Presentation
         /// </summary>
         void LateUpdate()
         {
+            if (_lateCueDt > 0f && _rig != null)
+            {
+                ApplyCueIK(_lateCueDt, AvatarPose.Aiming);
+                _lateCueDt = 0f;
+            }
             var cam = Camera.main;
             if (cam == null || _rig == null) return;
             Vector3 c = cam.transform.position;

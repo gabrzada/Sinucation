@@ -62,7 +62,7 @@ namespace FriendSlop.EditorTools
                     var tip = ball-direction*.04f;
                     var bridge = ball-holder.transform.forward*.18f;
                     bridge.y = holder.transform.position.y+TableView.TopY+.035f;
-                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip,-direction)+.2f+AvatarVisual.CueGripFromButt,.75f,2.4f);
+                    float length = Mathf.Clamp(Vector3.Dot(avatar.RightShoulderPosition-tip,-direction)+AvatarVisual.CueGripBehindShoulder+AvatarVisual.CueGripFromButt,.75f,2.4f);
                     for (int frame=0;frame<60;frame++)
                     {
                         if(pose==AvatarPose.Aiming) avatar.SetCue(tip,direction,length,bridge);

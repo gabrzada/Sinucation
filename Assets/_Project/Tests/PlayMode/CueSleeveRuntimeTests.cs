@@ -32,6 +32,14 @@ namespace FriendSlop.Tests
                     var renderer = sleeve.GetComponent<Renderer>();
                     Assert.That(renderer.shadowCastingMode, Is.EqualTo(ShadowCastingMode.ShadowsOnly));
                     var oldMesh = sleeve.GetComponent<MeshFilter>().sharedMesh;
+                    // Match gameplay order: the avatar updates, then CueView publishes
+                    // a new target before the frame is drawn.
+                    Vector3 turnedCue = Quaternion.Euler(0f, 12f, 0f) * Vector3.forward;
+                    avatar.Animate(1f / 60f, AvatarPose.Aiming, 10f, false);
+                    avatar.SetCue(new Vector3(.2f, .92f, .65f), turnedCue, 1.2f, new Vector3(.2f, .9f, .5f));
+                    yield return null;
+                    Assert.That(Vector3.Angle(avatar.RightHand.forward, turnedCue), Is.LessThan(1f),
+                        "The grip must follow the cue target published after the avatar update.");
                     avatar.Animate(1f / 60f, AvatarPose.Idle, 0f, false);
                     Assert.That(sleeve.gameObject.activeSelf, Is.False);
                     avatar.Apply(new PlayerProfile("QA", shape, Color.red));
